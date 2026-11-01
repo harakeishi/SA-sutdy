@@ -26,6 +26,16 @@
     B2: { label: '科目B-2', sub: '論述式・2問中1問', min: 120, of: 2, pick: 1 },
   };
   const LABELS = ['ア', 'イ', 'ウ', 'エ'];
+  const svg = (d) => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const ICON = {
+    close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+    left: svg('<path d="M15 5l-7 7 7 7"/>'),
+    right: svg('<path d="M9 5l7 7-7 7"/>'),
+    flag: svg('<path d="M5 21V4m0 0h11l-2 4 2 4H5"/>'),
+    grid: svg('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>'),
+    pause: svg('<path d="M9 5v14M15 5v14"/>'),
+    play: svg('<path d="M7 5l12 7-12 7z"/>'),
+  };
   const CONF = [
     { k: 'sure', label: '自信あり', key: 'a' },
     { k: 'maybe', label: 'たぶん', key: 's' },
@@ -55,7 +65,7 @@
   function defaultState() {
     return {
       v: 1,
-      settings: { dailyCount: 15, newRatio: 0.4, a1Exempt: false, examDate: '', examDateB: '', confidence: true, retry: true },
+      settings: { dailyCount: 15, newRatio: 0.4, a1Exempt: false, examDate: '', examDateB: '', confidence: true, retry: true, theme: 'auto', fontScale: 1, haptics: true, effects: true },
       cards: {}, log: [], daily: null, exams: [], notes: {}, marks: {}, snapshots: {}, examUsed: {}, active: null,
     };
   }
@@ -76,7 +86,9 @@
     s.newRatio = num(st.newRatio, 0, 1, s.newRatio);
     s.examDate = date(st.examDate);
     s.examDateB = date(st.examDateB);
-    ['a1Exempt', 'confidence', 'retry'].forEach((k) => { if (typeof st[k] === 'boolean') s[k] = st[k]; });
+    ['a1Exempt', 'confidence', 'retry', 'haptics', 'effects'].forEach((k) => { if (typeof st[k] === 'boolean') s[k] = st[k]; });
+    if (['auto', 'light', 'dark'].includes(st.theme)) s.theme = st.theme;
+    s.fontScale = num(st.fontScale, 0.8, 1.4, 1);
     // カードの数値を正規化
     Object.keys(out.cards).forEach((id) => {
       const c = out.cards[id];
@@ -321,6 +333,7 @@
     }
     Q.last = { ok, conf, ms, before, after: c.interval, isRetry };
     Q.phase = 'feedback';
+    haptic(ok ? 15 : [30, 60, 30]);
     snapshot();
     save();
     render();
@@ -340,12 +353,12 @@
     const c = S.cards[id];
     const fb = Q.phase === 'feedback';
     const isRetry = Q.retried[id] && Q.ids.indexOf(id) < Q.pos;
-    let h = `<div class="quiz">
-      <div class="qhead">
-        <span class="muted">${esc(Q.title)}</span>
-        <span class="muted">${Q.pos + 1} / ${Q.ids.length}</span>
+    let h = `<div class="focusbar">
+        <button class="iconbtn" data-act="quitquiz" aria-label="演習を終了">${ICON.close}</button>
+        <div class="progress grow" role="progressbar" aria-valuemin="0" aria-valuemax="${Q.ids.length}" aria-valuenow="${Q.pos}"><div style="width:${(Q.pos / Q.ids.length) * 100}%"></div></div>
+        <span class="fcount">${Q.pos + 1}<small>/${Q.ids.length}</small></span>
       </div>
-      <div class="progress"><div style="width:${(Q.pos / Q.ids.length) * 100}%"></div></div>
+      <div class="quiz" data-swipe="quiz">
       <div class="qmeta">
         <span class="tag ${q.exam.toLowerCase()}">${EXAM[q.exam].label}</span>
         <span class="tag">${esc(q.cat)}</span>
@@ -361,21 +374,22 @@
       let cls = '';
       if (fb) { if (ci === q.answer) cls = 'correct'; else if (ci === Q.sel) cls = 'wrong'; }
       else if (ci === Q.sel) cls = 'sel';
-      h += `<button class="choice ${cls}" data-act="sel" data-ci="${ci}" ${fb ? 'disabled' : ''}><b>${LABELS[k]}</b><span>${esc(q.choices[ci])}</span></button>`;
+      h += `<button class="choice ${cls}" data-act="sel" data-ci="${ci}" ${fb ? 'disabled' : ''} aria-pressed="${ci === Q.sel}"><b>${LABELS[k]}</b><span>${esc(q.choices[ci])}</span></button>`;
     });
     h += '</div>';
+    let bar = '';
     if (!fb) {
       if (S.settings.confidence) {
-        h += `<div class="confrow"><span class="muted small">選んだら自信度で解答 →</span>`;
-        CONF.forEach((cf) => (h += `<button class="btn conf ${cf.k}" data-act="conf" data-conf="${cf.k}" ${Q.sel == null ? 'disabled' : ''}>${cf.label}<kbd>${cf.key.toUpperCase()}</kbd></button>`));
-        h += '</div>';
+        bar = `<div class="barhint">${Q.sel == null ? '選択肢を選んでください' : 'どのくらい自信がありますか？'}</div><div class="confrow">`;
+        CONF.forEach((cf) => (bar += `<button class="btn conf ${cf.k}" data-act="conf" data-conf="${cf.k}" ${Q.sel == null ? 'disabled' : ''}>${cf.label}<kbd>${cf.key.toUpperCase()}</kbd></button>`));
+        bar += '</div>';
       } else {
-        h += `<div class="confrow"><button class="btn primary" data-act="conf" data-conf="" ${Q.sel == null ? 'disabled' : ''}>解答する<kbd>⏎</kbd></button></div>`;
+        bar = `<div class="confrow"><button class="btn primary block" data-act="conf" data-conf="" ${Q.sel == null ? 'disabled' : ''}>解答する<kbd>⏎</kbd></button></div>`;
       }
     } else {
       const L = Q.last;
       const iv = Math.round(S.cards[id].interval);
-      h += `<div class="feedback ${L.ok ? 'ok' : 'ng'}">
+      h += `<div class="feedback ${L.ok ? 'ok' : 'ng'}" role="status" aria-live="polite">
         <div class="fbhead">${L.ok ? '○ 正解' : '× 不正解'} <span class="muted small">${(L.ms / 1000).toFixed(0)}秒${q.exam === 'A1' ? '（目安100秒）' : '（目安96秒）'}</span>
         ${L.isRetry ? '' : `<span class="next">次の復習：${iv <= 1 ? '明日' : iv + '日後'}</span>`}</div>
         ${!L.ok && L.conf === 'sure' ? '<div class="callout">自信があったのに間違えた問題は、訂正すると記憶に残りやすい（過剰修正効果）。なぜ誤解していたかを一言メモしておこう。</div>' : ''}
@@ -384,10 +398,11 @@
         <label class="note">自分の言葉で要点メモ（次回の解説に表示）
           <textarea data-note="${id}" rows="2" placeholder="例：結合度は低いほど良い。データ結合が最良">${esc(S.notes[id] || '')}</textarea>
         </label>
-        <div class="row end"><button class="btn primary" data-act="next">次へ<kbd>⏎</kbd></button></div>
       </div>`;
+      bar = `<div class="confrow"><button class="btn primary block ${L.ok ? '' : 'ngbtn'}" data-act="next">${Q.pos + 1 >= Q.ids.length ? '結果を見る' : '次へ'}<kbd>⏎</kbd></button></div><div class="barhint swipehint">← スワイプでも次へ</div>`;
     }
     h += '</div>';
+    h += `<div class="actionbar">${bar}</div>`;
     app.innerHTML = h;
     tickElapsed();
   }
@@ -404,9 +419,10 @@
     const hc = first.filter((r) => !r.ok && r.conf === 'sure');
     const avg = first.length ? first.reduce((a, r) => a + r.ms, 0) / first.length : 0;
     const st = stats();
+    if (Q.mode === 'daily' && S.daily && !dailyRemaining().length && !Q.celebrated) { Q.celebrated = true; setTimeout(() => celebrate(), 150); }
     let h = `<section class="card center">
+      ${ring(first.length ? ok / first.length : 0, `${ok}<small>/${first.length}</small>`, 'big')}
       <h2>おつかれさま！</h2>
-      <div class="big">${ok} / ${first.length}</div>
       <div class="muted">正答率 ${pct(first.length ? ok / first.length : 0)} ・ 平均 ${(avg / 1000).toFixed(0)}秒/問 ・ 連続学習 ${streak()}日</div>
     </section>
     <section class="card"><h3>分野別</h3>${Charts.hbars(Object.entries(byCat).map(([k, v]) => ({ label: k, value: v.ok / v.n, sub: ` ${v.ok}/${v.n}` })))}</section>`;
@@ -578,7 +594,7 @@
     const st = S.active.stage;
     const paused = st.pausedLeft != null;
     return `<div class="timerbar"><span class="tlabel">${EXAM[st.type].label}</span><span id="timer" class="timer">${fmtClock(remaining())}</span>
-      <button class="btn small" data-act="pause">${paused ? '再開' : '一時停止'}</button></div>`;
+      <button class="iconbtn" data-act="pause" aria-label="${paused ? '再開' : '一時停止'}">${paused ? ICON.play : ICON.pause}</button></div>`;
   }
 
   function viewExamRun() {
@@ -610,22 +626,22 @@
   function viewExamA(st) {
     const id = st.ids[st.idx], q = QMAP[id];
     const answered = Object.keys(st.ans).length;
-    let h = timerHtml() + `<div class="quiz exam">
-      <div class="qhead"><span>問${st.idx + 1} <span class="muted">/ ${st.ids.length}</span></span><span class="muted">解答済 ${answered}/${st.ids.length}</span></div>
+    let h = timerHtml() + `<div class="quiz exam" data-swipe="exam">
+      <div class="qhead"><span><b>問${st.idx + 1}</b> <span class="muted">/ ${st.ids.length}</span></span><span class="muted small">解答済 ${answered}/${st.ids.length}</span></div>
       <div class="qtext">${esc(q.q)}</div><div class="choices">`;
-    st.orders[id].forEach((ci, k) => (h += `<button class="choice ${st.ans[id] === ci ? 'sel' : ''}" data-act="xsel" data-ci="${ci}"><b>${LABELS[k]}</b><span>${esc(q.choices[ci])}</span></button>`));
-    h += `</div>
-      <div class="row between">
-        <button class="btn" data-act="xprev" ${st.idx === 0 ? 'disabled' : ''}>← 前へ</button>
-        <button class="btn ${st.flags[id] ? 'flagged' : ''}" data-act="xflag">${st.flags[id] ? '⚑ 見直し中' : '⚐ 見直し'}</button>
-        <button class="btn" data-act="xnext" ${st.idx === st.ids.length - 1 ? 'disabled' : ''}>次へ →</button>
-      </div>
-      <div class="navgrid">`;
-    st.ids.forEach((qid, i) => (h += `<button class="nv ${i === st.idx ? 'cur' : ''} ${st.ans[qid] != null ? 'done' : ''} ${st.flags[qid] ? 'flag' : ''}" data-act="xgo" data-i="${i}">${i + 1}</button>`));
-    h += `</div>
-      <div class="row end"><button class="btn ghost" data-act="quitexam">中断</button><button class="btn primary" data-act="xfinish">解答を終了して提出</button></div>
-      <p class="muted small">キー操作：1〜4 選択 ／ ← → 移動 ／ F 見直しマーク。目安は1問あたり約${Math.round((st.min * 60) / st.ids.length)}秒。</p>
-    </div>`;
+    st.orders[id].forEach((ci, k) => (h += `<button class="choice ${st.ans[id] === ci ? 'sel' : ''}" data-act="xsel" data-ci="${ci}" aria-pressed="${st.ans[id] === ci}"><b>${LABELS[k]}</b><span>${esc(q.choices[ci])}</span></button>`));
+    h += `</div><p class="muted small hide-touch">キー操作：1〜4 選択 ／ ← → 移動 ／ F 見直しマーク。目安は1問あたり約${Math.round((st.min * 60) / st.ids.length)}秒。</p></div>
+      <div class="actionbar"><div class="xbar">
+        <button class="btn" data-act="xprev" ${st.idx === 0 ? 'disabled' : ''} aria-label="前の問題">${ICON.left}</button>
+        <button class="btn ${st.flags[id] ? 'flagged' : ''}" data-act="xflag" aria-label="見直しマーク">${ICON.flag}<span class="hide-xs">${st.flags[id] ? '見直し中' : '見直し'}</span></button>
+        <button class="btn" data-act="sheet" data-sheet="nav">${ICON.grid}<span>${answered}/${st.ids.length}</span></button>
+        <button class="btn primary" data-act="xnext" ${st.idx === st.ids.length - 1 ? 'disabled' : ''} aria-label="次の問題">${ICON.right}</button>
+      </div></div>`;
+    // 問題一覧（ボトムシート）
+    let g = `<div class="sheethead"><b>問題一覧</b><span class="muted small">■ 解答済　● 見直し</span></div><div class="navgrid">`;
+    st.ids.forEach((qid, i) => (g += `<button class="nv ${i === st.idx ? 'cur' : ''} ${st.ans[qid] != null ? 'done' : ''} ${st.flags[qid] ? 'flag' : ''}" data-act="xgo" data-i="${i}">${i + 1}</button>`));
+    g += `</div><div class="row between"><button class="btn ghost" data-act="quitexam">中断して破棄</button><button class="btn primary" data-act="xfinish">解答を終了して提出</button></div>`;
+    h += sheetHtml('nav', g);
     app.innerHTML = h;
   }
 
@@ -646,7 +662,9 @@
       const c = B1MAP[cid];
       let h = timerHtml();
       if (st.chosen.length > 1) h += `<div class="tabs">${st.chosen.map((id, i) => `<button class="${i === st.tab ? 'on' : ''}" data-act="b1tab" data-i="${i}">${esc(B1MAP[id].title)}</button>`).join('')}</div>`;
-      h += `<div class="split"><section class="card scen"><h3>${esc(c.title)}</h3><div class="pre">${esc(c.scenario)}</div></section><section class="card ans">`;
+      const pane = st.pane || 'scen';
+      h += `<div class="seg only-mobile" role="tablist"><button role="tab" class="${pane === 'scen' ? 'on' : ''}" data-act="b1pane" data-p="scen">問題文</button><button role="tab" class="${pane === 'ans' ? 'on' : ''}" data-act="b1pane" data-p="ans">設問・解答欄</button></div>
+        <div class="split pane-${pane}"><section class="card scen"><h3>${esc(c.title)}</h3><div class="pre">${esc(c.scenario)}</div></section><section class="card ans">`;
       c.questions.forEach((q, qi) => {
         const k = cid + ':' + qi;
         const v = (st.ans[k] || '');
@@ -801,12 +819,11 @@
       <div class="streak">🔥 ${sk}日連続</div>
     </section>
     <section class="card daily">
-      <div class="row between"><h2>今日の学習</h2><span class="muted">${doneN} / ${d.ids.length}</span></div>
-      <div class="progress"><div style="width:${(doneN / Math.max(1, d.ids.length)) * 100}%"></div></div>
-      <p class="muted small">復習期限の問題と新しい問題を、分野が偏らないように混ぜた ${d.ids.length} 問。毎日少しずつが最も効率的です。</p>
+      <div class="dailytop">${ring(doneN / Math.max(1, d.ids.length), `${doneN}<small>/${d.ids.length}</small>`)}
+        <div><h2>今日の学習</h2><p class="muted small">復習期限の問題と新しい問題を、分野が偏らないように混ぜた ${d.ids.length} 問。毎日少しずつが最も効率的です。</p></div></div>
       ${d.newPaused ? '<p class="small warn">復習待ちが多いため、今日は新しい問題を出していません。復習を消化すると新規が再開します。</p>' : ''}
       <div class="row">
-        ${remainIds.length ? `<button class="btn primary big" data-act="daily">${doneN ? '続きから' : 'はじめる'}（残り${remainIds.length}問）</button>` : '<span class="done">✓ 今日のノルマ達成！</span><button class="btn" data-act="dailymore">もう1セット</button>'}
+        ${remainIds.length ? `<button class="btn primary big block" data-act="daily">${doneN ? '続きから' : 'はじめる'}（残り${remainIds.length}問）</button>` : '<span class="done">✓ 今日のノルマ達成！</span><button class="btn" data-act="dailymore">もう1セット</button>'}
         ${st.due ? `<button class="btn" data-act="review">復習待ち ${st.due}問</button>` : ''}
       </div>
     </section>
@@ -833,9 +850,20 @@
     app.innerHTML = h;
   }
 
+  /** 演習メニュー（モバイルのタブ「演習」） */
+  function practiceModes() {
+    return `<div class="modes">
+      <button class="mode" data-act="go" data-to="/practice"><b>分野別演習</b><span>分野・問題数を選んで集中特訓</span></button>
+      <button class="mode" data-act="weak"><b>弱点克服</b><span>正答率が低い・何度も忘れた問題</span></button>
+      <button class="mode" data-act="cram"><b>直前総仕上げ</b><span>試験日に忘れていそうな問題から</span></button>
+      <button class="mode" data-act="go" data-to="/b1"><b>記述（B-1）演習</b><span>事例を1問45分。模範解答と自己採点</span></button>
+      <button class="mode" data-act="go" data-to="/b2"><b>論述（B-2）演習</b><span>骨子→論述→評価観点で自己評価</span></button>
+      <button class="mode" data-act="go" data-to="/browse"><b>問題一覧</b><span>検索・ブックマーク・メモの確認</span></button>
+    </div>`;
+  }
   function viewPractice() {
     const ex = S.settings.a1Exempt ? ['A2'] : ['A2', 'A1'];
-    let h = `<section class="card"><h2>分野別演習</h2><form id="pform">`;
+    let h = `<section class="card"><h2>演習メニュー</h2>${practiceModes()}</section><section class="card"><h2>分野別演習</h2><form id="pform">`;
     ex.forEach((e) => {
       h += `<h3>${EXAM[e].label} <span class="muted small">${EXAM[e].sub}</span> <button type="button" class="btn small ghost" data-act="allcat" data-e="${e}">全選択</button></h3><div class="cats">`;
       catStats(e).forEach((c) => (h += `<label class="catopt"><input type="checkbox" name="cat" value="${e}|${esc(c.cat)}"><span>${esc(c.cat)}</span><small>${c.learned}/${c.total} ・ ${pct(c.acc)}</small></label>`));
@@ -1021,7 +1049,13 @@
       <label class="chk"><input type="checkbox" name="a1Exempt" ${s.a1Exempt ? 'checked' : ''}> 科目A-1 免除（応用情報技術者試験の合格／高度試験・情報処理安全確保支援士試験の合格／高度試験・支援士試験の科目A-1（旧午前Ⅰ）で基準点以上、のいずれかから2年間）</label>
       <label class="chk"><input type="checkbox" name="confidence" ${s.confidence ? 'checked' : ''}> 解答時に自信度を選ぶ（推奨：復習間隔の精度が上がる）</label>
       <label class="chk"><input type="checkbox" name="retry" ${s.retry ? 'checked' : ''}> 間違えた問題をセッション内で再出題する</label>
+      <h3>表示</h3>
+      <label>テーマ <select name="theme">${[['auto', '端末の設定に合わせる'], ['light', 'ライト'], ['dark', 'ダーク']].map(([v, l]) => `<option value="${v}" ${s.theme === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>文字サイズ <select name="fontScale">${[[0.9, '小'], [1, '標準'], [1.12, '大'], [1.25, '特大']].map(([v, l]) => `<option value="${v}" ${s.fontScale == v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="chk"><input type="checkbox" name="haptics" ${s.haptics ? 'checked' : ''}> 解答時に振動する（対応端末のみ）</label>
+      <label class="chk"><input type="checkbox" name="effects" ${s.effects ? 'checked' : ''}> 達成時の演出（端末の「視差効果を減らす」設定時は自動で無効）</label>
       <div class="row end"><button class="btn primary">保存</button></div></form></section>
+      <a class="card linkcard" href="#/guide"><b>このアプリの学習法</b><span class="muted small">取り入れた学習科学と、おすすめの使い方</span>${ICON.right}</a>
       <section class="card"><h3>データ</h3><p class="muted small">学習記録はこのブラウザ内（localStorage）だけに保存されます。機種変更やブラウザのデータ削除に備えて、ときどきバックアップしてください。</p>
       <div class="row wrap"><button class="btn" data-act="export">バックアップを書き出す</button>
       <label class="btn">バックアップを読み込む<input type="file" id="importf" accept="application/json" hidden></label>
@@ -1075,7 +1109,11 @@
   function render() {
     route = location.hash.slice(1) || '/';
     const nav = route.split('/')[1] || 'home';
-    $$('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === (nav === '' ? 'home' : nav)));
+    const navKey = { b1: 'practice', b2: 'practice', browse: 'practice', quiz: 'practice', guide: 'settings' }[nav] || nav;
+    $$('[data-nav]').forEach((a) => { const on = a.dataset.nav === navKey; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+    // 演習・模試中は集中モード（ナビを隠す）
+    document.body.classList.toggle('focus', route === '/quiz' || route === '/exam/run');
+    closeSheet();
     if (route === '/' || route === '') return viewHome();
     if (route === '/quiz') return viewQuiz();
     if (route === '/practice') return viewPractice();
@@ -1090,7 +1128,14 @@
     if (route === '/guide') return viewGuide();
     viewHome();
   }
-  window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
+  window.addEventListener('hashchange', () => {
+    const run = () => { render(); window.scrollTo(0, 0); };
+    if (document.startViewTransition && !reducedMotion()) {
+      const vt = document.startViewTransition(run);
+      // 連続遷移で前の遷移が中断されるのは正常なので握りつぶす
+      [vt.ready, vt.finished, vt.updateCallbackDone].forEach((pr) => pr && pr.catch(() => {}));
+    } else run();
+  });
 
   // ---------------------------------------------------------------- イベント
   document.addEventListener('click', (e) => {
@@ -1100,6 +1145,9 @@
     const st = S.active && S.active.stage;
     switch (a) {
       case 'go': go(t.dataset.to); break;
+      case 'sheet': openSheet(t.dataset.sheet); break;
+      case 'closesheet': closeSheet(); break;
+      case 'quitquiz': if (!Q || Q.phase === 'done' || confirm('演習を終了しますか？（解答済みの記録は保存されています）')) { Q = null; go('/'); } break;
       case 'daily': ensureDaily(); startQuiz(dailyRemaining(), 'daily', '今日の学習'); break;
       case 'dailymore': { const ids = buildDaily(true); startQuiz(ids, 'daily', '今日の学習（追加）'); break; }
       case 'review': {
@@ -1130,10 +1178,10 @@
       case 'beginstage': beginStage(); break;
       case 'quitexam': quitExam(); break;
       case 'pause': togglePause(); break;
-      case 'xsel': { const id = st.ids[st.idx]; const ci = +t.dataset.ci; if (st.ans[id] === ci) delete st.ans[id]; else st.ans[id] = ci; save(); render(); break; }
-      case 'xprev': trackSpent(); st.idx--; save(); render(); break;
-      case 'xnext': trackSpent(); st.idx++; save(); render(); break;
-      case 'xgo': trackSpent(); st.idx = +t.dataset.i; save(); render(); break;
+      case 'xsel': { const id = st.ids[st.idx]; const ci = +t.dataset.ci; if (st.ans[id] === ci) delete st.ans[id]; else st.ans[id] = ci; haptic(8); save(); render(); break; }
+      case 'xprev': examMove(-1); break;
+      case 'xnext': examMove(1); break;
+      case 'xgo': trackSpent(); st.idx = +t.dataset.i; save(); render(); window.scrollTo(0, 0); break;
       case 'xflag': { const id = st.ids[st.idx]; if (st.flags[id]) delete st.flags[id]; else st.flags[id] = 1; save(); render(); break; }
       case 'xfinish': {
         const un = st.ids.length - Object.keys(st.ans).length;
@@ -1143,6 +1191,7 @@
       case 'b1pick': { const id = t.dataset.id; const i = st.chosen.indexOf(id); if (i >= 0) st.chosen.splice(i, 1); else if (st.chosen.length < EXAM.B1.pick) st.chosen.push(id); else toast(`${EXAM.B1.pick}問まで選べます`); save(); render(); break; }
       case 'b1start': st.phase = 'answer'; st.tab = 0; save(); render(); break;
       case 'b1tab': st.tab = +t.dataset.i; save(); render(); window.scrollTo(0, 0); break;
+      case 'b1pane': st.pane = t.dataset.p; save(); render(); window.scrollTo(0, 0); break;
       case 'b1submit': if (confirm('解答を終了して自己採点に進みますか？')) finishB1Answer(); break;
       case 'b1grade': st.grades[t.dataset.k] = +t.dataset.v; save(); $$(`[data-k="${t.dataset.k}"]`).forEach((b) => b.classList.toggle('on', b === t)); break;
       case 'b1done': finishB1Grade(); break;
@@ -1219,11 +1268,17 @@
       s.a1Exempt = !!fd.get('a1Exempt');
       s.confidence = !!fd.get('confidence');
       s.retry = !!fd.get('retry');
+      s.theme = ['auto', 'light', 'dark'].includes(fd.get('theme')) ? fd.get('theme') : 'auto';
+      s.fontScale = +fd.get('fontScale') || 1;
+      s.haptics = !!fd.get('haptics');
+      s.effects = !!fd.get('effects');
+      applyPrefs();
       if (prevExempt !== s.a1Exempt && S.daily) { const done = S.daily.done; buildDaily(); S.daily.done = done; }
       save(); toast('保存しました');
     }
   });
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.body.classList.contains('sheet-open')) { closeSheet(); return; }
     if (e.target.matches('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
     if (route === '/quiz' && Q) {
@@ -1236,11 +1291,75 @@
     } else if (route === '/exam/run' && S.active && S.active.stage && S.active.stage.ids && S.active.stage.pausedLeft == null) {
       const st = S.active.stage;
       if (k >= '1' && k <= '4') { st.ans[st.ids[st.idx]] = st.orders[st.ids[st.idx]][+k - 1]; save(); render(); }
-      if (k === 'arrowright' && st.idx < st.ids.length - 1) { trackSpent(); st.idx++; save(); render(); }
-      if (k === 'arrowleft' && st.idx > 0) { trackSpent(); st.idx--; save(); render(); }
+      if (k === 'arrowright') examMove(1);
+      if (k === 'arrowleft') examMove(-1);
       if (k === 'f') { const id = st.ids[st.idx]; if (st.flags[id]) delete st.flags[id]; else st.flags[id] = 1; save(); render(); }
     }
   });
+
+  // ---------------------------------------------------------------- モバイル UX ヘルパー
+  function reducedMotion() { return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  function haptic(p) { try { if (S.settings.haptics && navigator.vibrate) navigator.vibrate(p); } catch (e) { /* 非対応 */ } }
+  function applyPrefs() {
+    const s = S.settings, root = document.documentElement;
+    if (s.theme === 'auto') root.removeAttribute('data-theme'); else root.dataset.theme = s.theme;
+    root.style.setProperty('--scale', s.fontScale || 1);
+    const dark = s.theme === 'dark' || (s.theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+    const m = $('meta[name=theme-color]'); if (m) m.content = dark ? '#12161c' : '#f5f7fa';
+  }
+  /** 円形の進捗リング */
+  function ring(v, label, cls) {
+    const r = 26, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, v || 0));
+    return `<div class="ring ${cls || ''} ${f >= 1 ? 'full' : ''}"><svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="${r}" class="rt"/><circle cx="32" cy="32" r="${r}" class="rf" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - f)}"/></svg><span>${label}</span></div>`;
+  }
+  /** ボトムシート */
+  function sheetHtml(name, body) {
+    return `<div class="sheet-backdrop" data-act="closesheet" data-sheetfor="${name}"></div><div class="sheet" data-sheet-name="${name}" role="dialog" aria-modal="true" aria-label="問題一覧"><div class="grab" data-act="closesheet"></div>${body}</div>`;
+  }
+  function openSheet(name) { document.body.classList.add('sheet-open'); const sh = $(`[data-sheet-name="${name}"]`); if (sh) { sh.classList.add('open'); $(`[data-sheetfor="${name}"]`).classList.add('open'); const f = sh.querySelector('button'); if (f) f.focus({ preventScroll: true }); } }
+  function closeSheet() { document.body.classList.remove('sheet-open'); $$('.sheet.open, .sheet-backdrop.open').forEach((e) => e.classList.remove('open')); }
+  function examMove(d) {
+    const st = S.active && S.active.stage;
+    if (!st || !st.ids) return;
+    const n = st.idx + d;
+    if (n < 0 || n >= st.ids.length) return;
+    trackSpent(); st.idx = n; save(); render(); window.scrollTo(0, 0);
+  }
+  /** 達成時の紙吹雪（軽量 canvas） */
+  function celebrate() {
+    haptic([20, 40, 20, 40, 60]);
+    if (!S.settings.effects || reducedMotion()) return;
+    const cv = document.createElement('canvas');
+    cv.className = 'confetti'; cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio;
+    document.body.appendChild(cv);
+    const g = cv.getContext('2d'); g.scale(devicePixelRatio, devicePixelRatio);
+    const cols = ['#1f5fa8', '#1f8a4c', '#e3a33a', '#c23b3b', '#7a4cc2', '#5b9be0'];
+    const ps = Array.from({ length: 90 }, () => ({ x: innerWidth / 2, y: innerHeight * 0.35, vx: (Math.random() - 0.5) * 12, vy: -Math.random() * 12 - 4, r: Math.random() * 6 + 4, a: Math.random() * 6, va: (Math.random() - 0.5) * 0.4, c: cols[(Math.random() * cols.length) | 0] }));
+    const t0 = performance.now();
+    (function frame(t) {
+      const k = (t - t0) / 1600;
+      g.clearRect(0, 0, innerWidth, innerHeight);
+      ps.forEach((p) => { p.vy += 0.35; p.vx *= 0.99; p.x += p.vx; p.y += p.vy; p.a += p.va; g.save(); g.globalAlpha = Math.max(0, 1 - k); g.translate(p.x, p.y); g.rotate(p.a); g.fillStyle = p.c; g.fillRect(-p.r / 2, -p.r / 4, p.r, p.r / 2); g.restore(); });
+      if (k < 1) requestAnimationFrame(frame); else cv.remove();
+    })(t0);
+  }
+  // スワイプ：演習のフィードバック画面で左へ→次へ、模試で左右→前後の問題
+  (function () {
+    let sx = 0, sy = 0, st0 = 0, tracking = false;
+    document.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1 || !e.target.closest('[data-swipe]') || e.target.closest('textarea, input, .sheet')) { tracking = false; return; }
+      tracking = true; sx = e.touches[0].clientX; sy = e.touches[0].clientY; st0 = Date.now();
+    }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+      if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8 || Date.now() - st0 > 600) return;
+      if (route === '/quiz' && Q && Q.phase === 'feedback' && dx < 0) nextQuiz();
+      else if (route === '/exam/run') examMove(dx < 0 ? 1 : -1);
+    }, { passive: true });
+  })();
+  if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyPrefs);
 
   // タイマー
   setInterval(() => {
@@ -1272,5 +1391,6 @@
   // PWA（http(s) で配信している場合のみ）
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
+  applyPrefs();
   render();
 })();

@@ -8,7 +8,7 @@
    */
   function combo(data, opt) {
     opt = opt || {};
-    const W = 640, H = 220, L = 34, R = 34, T = 14, B = 26;
+    const W = 640, H = 220, L = 44, R = 52, T = 14, B = 30;
     const iw = W - L - R, ih = H - T - B;
     const rawMax = Math.max(1, ...data.map((d) => d.bar || 0));
     const maxBar = Math.ceil(rawMax / 4) * 4; // 目盛りが整数になるように
@@ -52,7 +52,7 @@
   /** 複数系列の折れ線 series: [{name, cls, points:[{x(label), y}]}] y の最大値 yMax */
   function lines(labels, series, opt) {
     opt = opt || {};
-    const W = 640, H = 220, L = 40, R = 12, T = 14, B = 26;
+    const W = 640, H = 220, L = 52, R = 16, T = 14, B = 30;
     const iw = W - L - R, ih = H - T - B;
     const yMax = opt.yMax || Math.max(1, ...series.flatMap((s) => s.values.filter((v) => v != null)));
     const n = Math.max(labels.length, 2);

@@ -333,12 +333,23 @@
     }
     Q.last = { ok, conf, ms, before, after: c.interval, isRetry };
     Q.phase = 'feedback';
+    Q.fbAt = Date.now();
     haptic(ok ? 15 : [30, 60, 30]);
     snapshot();
     save();
     render();
+    announce(ok ? '正解です' : '不正解です。正解は ' + q.choices[q.answer]);
+    // 正誤と解説が画面外にならないよう、フィードバックまでスクロール
+    const fbEl = $('.feedback');
+    if (fbEl) {
+      const top = fbEl.getBoundingClientRect().top + window.scrollY - 64;
+      const ch = $('.choices'); const chTop = ch ? ch.getBoundingClientRect().top + window.scrollY - 64 : top;
+      window.scrollTo({ top: Math.max(0, Math.min(top, Math.max(chTop, top - window.innerHeight * 0.45))), behavior: reducedMotion() ? 'auto' : 'smooth' });
+    }
   }
   function nextQuiz() {
+    // 自信度ボタンの二重タップで解説を読まずに進まないよう、直後の操作は無視
+    if (!Q || Q.phase !== 'feedback' || Date.now() - (Q.fbAt || 0) < 500) return;
     Q.pos++;
     if (Q.pos >= Q.ids.length) { Q.phase = 'done'; render(); return; }
     prepQuestion();
@@ -347,7 +358,7 @@
   }
 
   function viewQuiz() {
-    if (!Q) return go('/');
+    if (!Q) return redirect('/');
     if (Q.phase === 'done') return viewQuizSummary();
     const id = Q.ids[Q.pos], q = QMAP[id];
     const c = S.cards[id];
@@ -365,7 +376,7 @@
         <span class="tag lv">${'★'.repeat(q.level || 2)}</span>
         ${!c || !c.last ? '<span class="tag new">NEW</span>' : ''}
         ${isRetry ? '<span class="tag retry">再挑戦</span>' : ''}
-        <button class="mark ${S.marks[id] ? 'on' : ''}" data-act="mark" data-id="${id}" title="ブックマーク">${S.marks[id] ? '★' : '☆'}</button>
+        <button class="mark ${S.marks[id] ? 'on' : ''}" data-act="mark" data-id="${id}" title="ブックマーク" aria-label="ブックマーク" aria-pressed="${!!S.marks[id]}">${S.marks[id] ? '★' : '☆'}</button>
         <span class="elapsed" id="elapsed"></span>
       </div>
       <div class="qtext">${esc(q.q)}</div>
@@ -374,7 +385,8 @@
       let cls = '';
       if (fb) { if (ci === q.answer) cls = 'correct'; else if (ci === Q.sel) cls = 'wrong'; }
       else if (ci === Q.sel) cls = 'sel';
-      h += `<button class="choice ${cls}" data-act="sel" data-ci="${ci}" ${fb ? 'disabled' : ''} aria-pressed="${ci === Q.sel}"><b>${LABELS[k]}</b><span>${esc(q.choices[ci])}</span></button>`;
+      const sr = fb ? (ci === q.answer ? '（正解）' : ci === Q.sel ? '（あなたの解答・不正解）' : '') : '';
+      h += `<button class="choice ${cls}" data-act="sel" data-ci="${ci}" ${fb ? 'disabled' : ''} aria-pressed="${ci === Q.sel}"><b>${LABELS[k]}</b><span>${esc(q.choices[ci])}${sr ? `<em class="vh">${sr}</em>` : ''}${fb && ci === q.answer ? '<i class="mk" aria-hidden="true">✓</i>' : fb && ci === Q.sel ? '<i class="mk" aria-hidden="true">✗</i>' : ''}</span></button>`;
     });
     h += '</div>';
     let bar = '';
@@ -389,7 +401,7 @@
     } else {
       const L = Q.last;
       const iv = Math.round(S.cards[id].interval);
-      h += `<div class="feedback ${L.ok ? 'ok' : 'ng'}" role="status" aria-live="polite">
+      h += `<div class="feedback ${L.ok ? 'ok' : 'ng'}" tabindex="-1">
         <div class="fbhead">${L.ok ? '○ 正解' : '× 不正解'} <span class="muted small">${(L.ms / 1000).toFixed(0)}秒${q.exam === 'A1' ? '（目安100秒）' : '（目安96秒）'}</span>
         ${L.isRetry ? '' : `<span class="next">次の復習：${iv <= 1 ? '明日' : iv + '日後'}</span>`}</div>
         ${!L.ok && L.conf === 'sure' ? '<div class="callout">自信があったのに間違えた問題は、訂正すると記憶に残りやすい（過剰修正効果）。なぜ誤解していたかを一言メモしておこう。</div>' : ''}
@@ -399,7 +411,7 @@
           <textarea data-note="${id}" rows="2" placeholder="例：結合度は低いほど良い。データ結合が最良">${esc(S.notes[id] || '')}</textarea>
         </label>
       </div>`;
-      bar = `<div class="confrow"><button class="btn primary block ${L.ok ? '' : 'ngbtn'}" data-act="next">${Q.pos + 1 >= Q.ids.length ? '結果を見る' : '次へ'}<kbd>⏎</kbd></button></div><div class="barhint swipehint">← スワイプでも次へ</div>`;
+      bar = `<div class="barverdict ${L.ok ? 'ok' : 'ng'}" aria-hidden="true">${L.ok ? '○ 正解' : '× 不正解 — 正解は ' + LABELS[Q.order.indexOf(q.answer)]}</div><div class="confrow"><button class="btn primary block ${L.ok ? '' : 'ngbtn'}" data-act="next">${Q.pos + 1 >= Q.ids.length ? '結果を見る' : '次へ'}<kbd>⏎</kbd></button></div><div class="barhint swipehint">← スワイプでも次へ</div>`;
     }
     h += '</div>';
     h += `<div class="actionbar">${bar}</div>`;
@@ -599,7 +611,7 @@
 
   function viewExamRun() {
     const A = S.active;
-    if (!A) return go('/exam');
+    if (!A) return redirect('/exam');
     if (!A.stage) {
       // 科目の合間
       const next = A.stages[A.si];
@@ -630,16 +642,16 @@
       <div class="qhead"><span><b>問${st.idx + 1}</b> <span class="muted">/ ${st.ids.length}</span></span><span class="muted small">解答済 ${answered}/${st.ids.length}</span></div>
       <div class="qtext">${esc(q.q)}</div><div class="choices">`;
     st.orders[id].forEach((ci, k) => (h += `<button class="choice ${st.ans[id] === ci ? 'sel' : ''}" data-act="xsel" data-ci="${ci}" aria-pressed="${st.ans[id] === ci}"><b>${LABELS[k]}</b><span>${esc(q.choices[ci])}</span></button>`));
-    h += `</div><p class="muted small hide-touch">キー操作：1〜4 選択 ／ ← → 移動 ／ F 見直しマーク。目安は1問あたり約${Math.round((st.min * 60) / st.ids.length)}秒。</p></div>
+    h += `</div>${st.ans[id] != null ? '<div class="row end"><button class="btn small ghost" data-act="xclear">解答を取り消す</button></div>' : ''}<p class="muted small hide-touch">キー操作：1〜4 選択 ／ ← → 移動 ／ F 見直しマーク。目安は1問あたり約${Math.round((st.min * 60) / st.ids.length)}秒。</p></div>
       <div class="actionbar"><div class="xbar">
         <button class="btn" data-act="xprev" ${st.idx === 0 ? 'disabled' : ''} aria-label="前の問題">${ICON.left}</button>
-        <button class="btn ${st.flags[id] ? 'flagged' : ''}" data-act="xflag" aria-label="見直しマーク">${ICON.flag}<span class="hide-xs">${st.flags[id] ? '見直し中' : '見直し'}</span></button>
+        <button class="btn ${st.flags[id] ? 'flagged' : ''}" data-act="xflag" aria-label="見直しマーク" aria-pressed="${!!st.flags[id]}">${ICON.flag}<span class="hide-xs">${st.flags[id] ? '見直し中' : '見直し'}</span></button>
         <button class="btn" data-act="sheet" data-sheet="nav">${ICON.grid}<span>${answered}/${st.ids.length}</span></button>
         <button class="btn primary" data-act="xnext" ${st.idx === st.ids.length - 1 ? 'disabled' : ''} aria-label="次の問題">${ICON.right}</button>
       </div></div>`;
     // 問題一覧（ボトムシート）
     let g = `<div class="sheethead"><b>問題一覧</b><span class="muted small">■ 解答済　● 見直し</span></div><div class="navgrid">`;
-    st.ids.forEach((qid, i) => (g += `<button class="nv ${i === st.idx ? 'cur' : ''} ${st.ans[qid] != null ? 'done' : ''} ${st.flags[qid] ? 'flag' : ''}" data-act="xgo" data-i="${i}">${i + 1}</button>`));
+    st.ids.forEach((qid, i) => (g += `<button class="nv ${i === st.idx ? 'cur' : ''} ${st.ans[qid] != null ? 'done' : ''} ${st.flags[qid] ? 'flag' : ''}" data-act="xgo" data-i="${i}" aria-label="問${i + 1}${st.ans[qid] != null ? ' 解答済' : ' 未解答'}${st.flags[qid] ? ' 見直し' : ''}${i === st.idx ? ' 表示中' : ''}">${i + 1}</button>`));
     g += `</div><div class="row between"><button class="btn ghost" data-act="quitexam">中断して破棄</button><button class="btn primary" data-act="xfinish">解答を終了して提出</button></div>`;
     h += sheetHtml('nav', g);
     app.innerHTML = h;
@@ -751,7 +763,7 @@
 
   function viewExamResult(idx) {
     const r = S.exams[idx];
-    if (!r) return go('/exam');
+    if (!r) return redirect('/exam');
     const isDay = r.kind === 'dayA' || r.kind === 'dayB' || r.kind === 'full';
     // 多段階選抜：前の科目が基準点未満なら、以降は採点対象外
     let failedAt = -1;
@@ -1108,7 +1120,19 @@
   // ---------------------------------------------------------------- ルーター
   let route = '/';
   function go(p) { if (location.hash !== '#' + p) location.hash = '#' + p; else render(); }
+  /** 表示できる状態がないときの転送（履歴を増やさない。戻る操作で抜けられなくなるのを防ぐ） */
+  function redirect(p) { if (location.hash !== '#' + p) location.replace('#' + p); else render(); }
   function render() {
+    // 再描画でフォーカスが body に飛ばないよう、同じ操作要素へ戻す
+    const ae = document.activeElement;
+    const key = ae && ae.dataset && ae.dataset.act ? `[data-act="${ae.dataset.act}"]${ae.dataset.ci != null ? `[data-ci="${ae.dataset.ci}"]` : ''}${ae.dataset.i != null ? `[data-i="${ae.dataset.i}"]` : ''}${ae.dataset.conf != null ? `[data-conf="${ae.dataset.conf}"]` : ''}` : null;
+    renderRoute();
+    if (key && document.activeElement === document.body) {
+      const el = $(key) || (Q && Q.phase === 'feedback' && route === '/quiz' ? $('[data-act="next"]') : null);
+      if (el && !el.disabled) el.focus({ preventScroll: true });
+    }
+  }
+  function renderRoute() {
     route = location.hash.slice(1) || '/';
     const nav = route.split('/')[1] || 'home';
     const navKey = { b1: 'practice', b2: 'practice', browse: 'practice', quiz: 'practice', guide: 'settings' }[nav] || nav;
@@ -1148,7 +1172,7 @@
     switch (a) {
       case 'go': go(t.dataset.to); break;
       case 'sheet': openSheet(t.dataset.sheet); break;
-      case 'closesheet': closeSheet(); break;
+      case 'closesheet': closeSheet(true); break;
       case 'quitquiz': if (!Q || Q.phase === 'done' || confirm('演習を終了しますか？（解答済みの記録は保存されています）')) { Q = null; go('/'); } break;
       case 'daily': ensureDaily(); startQuiz(dailyRemaining(), 'daily', '今日の学習'); break;
       case 'dailymore': { const ids = buildDaily(true); startQuiz(ids, 'daily', '今日の学習（追加）'); break; }
@@ -1178,22 +1202,30 @@
       case 'b1': if (S.active && !confirm('受験中の模試を破棄して始めますか？')) return; startExam('B1', { caseId: t.dataset.id }); break;
       case 'b2': if (S.active && !confirm('受験中の模試を破棄して始めますか？')) return; startExam('B2', { caseId: t.dataset.id }); break;
       case 'beginstage': beginStage(); break;
-      case 'quitexam': quitExam(); break;
+      case 'quitexam': sheetOpener = null; withSheetClosed(quitExam); break;
       case 'pause': togglePause(); break;
-      case 'xsel': { const id = st.ids[st.idx]; const ci = +t.dataset.ci; if (st.ans[id] === ci) delete st.ans[id]; else st.ans[id] = ci; haptic(8); save(); render(); break; }
+      case 'xsel': { const id = st.ids[st.idx]; const ci = +t.dataset.ci; if (st.ans[id] === ci) break; st.ans[id] = ci; haptic(8); save(); render(); break; }
+      case 'xclear': { delete st.ans[st.ids[st.idx]]; save(); render(); break; }
       case 'xprev': examMove(-1); break;
       case 'xnext': examMove(1); break;
-      case 'xgo': trackSpent(); st.idx = +t.dataset.i; save(); render(); window.scrollTo(0, 0); break;
+      case 'xgo': { const i = +t.dataset.i; sheetOpener = null; withSheetClosed(() => { trackSpent(); st.idx = i; save(); render(); window.scrollTo(0, 0); }); break; }
       case 'xflag': { const id = st.ids[st.idx]; if (st.flags[id]) delete st.flags[id]; else st.flags[id] = 1; save(); render(); break; }
       case 'xfinish': {
         const un = st.ids.length - Object.keys(st.ans).length;
         if (!confirm(un ? `未解答が ${un} 問あります。提出しますか？` : '提出しますか？')) return;
-        finishAStage(false); break;
+        sheetOpener = null; withSheetClosed(() => finishAStage(false)); break;
       }
       case 'b1pick': { const id = t.dataset.id; const i = st.chosen.indexOf(id); if (i >= 0) st.chosen.splice(i, 1); else if (st.chosen.length < EXAM.B1.pick) st.chosen.push(id); else toast(`${EXAM.B1.pick}問まで選べます`); save(); render(); break; }
       case 'b1start': st.phase = 'answer'; st.tab = 0; save(); render(); break;
       case 'b1tab': st.tab = +t.dataset.i; save(); render(); window.scrollTo(0, 0); break;
-      case 'b1pane': st.pane = t.dataset.p; save(); render(); window.scrollTo(0, 0); break;
+      case 'b1pane': {
+        // タブごとにスクロール位置を覚えておき、行き来しても読んでいた位置に戻る
+        const cur = st.pane || 'scen';
+        if (cur === t.dataset.p) break;
+        st.paneY = st.paneY || {}; st.paneY[cur] = window.scrollY;
+        st.pane = t.dataset.p; save(); render();
+        window.scrollTo(0, st.paneY[st.pane] || 0); break;
+      }
       case 'b1submit': if (confirm('解答を終了して自己採点に進みますか？')) finishB1Answer(); break;
       case 'b1grade': st.grades[t.dataset.k] = +t.dataset.v; save(); $$(`[data-k="${t.dataset.k}"]`).forEach((b) => b.classList.toggle('on', b === t)); break;
       case 'b1done': finishB1Grade(); break;
@@ -1280,7 +1312,7 @@
     }
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && document.body.classList.contains('sheet-open')) { closeSheet(); return; }
+    if (document.body.classList.contains('sheet-open')) { if (e.key === 'Escape') closeSheet(true); return; }
     if (e.target.matches('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
     if (route === '/quiz' && Q) {
@@ -1300,6 +1332,12 @@
   });
 
   // ---------------------------------------------------------------- モバイル UX ヘルパー
+  /** スクリーンリーダー向けの通知（常設のライブリージョン） */
+  function announce(msg) {
+    let lr = $('#live');
+    if (!lr) { lr = document.createElement('div'); lr.id = 'live'; lr.className = 'vh'; lr.setAttribute('role', 'status'); lr.setAttribute('aria-live', 'polite'); document.body.appendChild(lr); }
+    lr.textContent = ''; setTimeout(() => (lr.textContent = msg), 50);
+  }
   function reducedMotion() { return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; }
   function haptic(p) { try { if (S.settings.haptics && navigator.vibrate) navigator.vibrate(p); } catch (e) { /* 非対応 */ } }
   function applyPrefs() {
@@ -1316,10 +1354,40 @@
   }
   /** ボトムシート */
   function sheetHtml(name, body) {
-    return `<div class="sheet-backdrop" data-act="closesheet" data-sheetfor="${name}"></div><div class="sheet" data-sheet-name="${name}" role="dialog" aria-modal="true" aria-label="問題一覧"><div class="grab" data-act="closesheet"></div>${body}</div>`;
+    return `<div class="sheet-backdrop" data-act="closesheet" data-sheetfor="${name}"></div><div class="sheet" data-sheet-name="${name}" role="dialog" aria-modal="true" aria-label="問題一覧" inert aria-hidden="true"><div class="grab" data-act="closesheet"></div>${body}</div>`;
   }
-  function openSheet(name) { document.body.classList.add('sheet-open'); const sh = $(`[data-sheet-name="${name}"]`); if (sh) { sh.classList.add('open'); $(`[data-sheetfor="${name}"]`).classList.add('open'); const f = sh.querySelector('button'); if (f) f.focus({ preventScroll: true }); } }
-  function closeSheet() { document.body.classList.remove('sheet-open'); $$('.sheet.open, .sheet-backdrop.open').forEach((e) => e.classList.remove('open')); }
+  let sheetOpener = null;
+  function openSheet(name) {
+    const sh = $(`[data-sheet-name="${name}"]`);
+    if (!sh) return;
+    sheetOpener = document.activeElement;
+    document.body.classList.add('sheet-open');
+    sh.classList.add('open'); sh.inert = false; sh.removeAttribute('aria-hidden');
+    $(`[data-sheetfor="${name}"]`).classList.add('open');
+    // 戻る操作でシートだけを閉じられるよう履歴を1つ積む
+    history.pushState({ sheet: name }, '');
+    const f = sh.querySelector('.nv.cur') || sh.querySelector('button'); if (f) f.focus({ preventScroll: true });
+  }
+  /** fromUi: ボタン等で閉じた場合は積んだ履歴を戻す */
+  function closeSheet(fromUi) {
+    const wasOpen = document.body.classList.contains('sheet-open');
+    document.body.classList.remove('sheet-open');
+    $$('.sheet.open, .sheet-backdrop.open').forEach((e) => e.classList.remove('open'));
+    $$('.sheet').forEach((e) => { e.inert = true; e.setAttribute('aria-hidden', 'true'); });
+    if (wasOpen && fromUi && history.state && history.state.sheet) history.back();
+    if (wasOpen && sheetOpener && document.contains(sheetOpener)) sheetOpener.focus({ preventScroll: true });
+    sheetOpener = null;
+  }
+  let afterSheet = null;
+  /** シート用に積んだ履歴を戻し終えてから fn を実行（戻る処理と画面遷移の競合を防ぐ） */
+  function withSheetClosed(fn) {
+    if (history.state && history.state.sheet) { afterSheet = fn; history.back(); }
+    else { closeSheet(false); fn(); }
+  }
+  window.addEventListener('popstate', () => {
+    if (document.body.classList.contains('sheet-open')) closeSheet(false);
+    if (afterSheet) { const f = afterSheet; afterSheet = null; f(); }
+  });
   function examMove(d) {
     const st = S.active && S.active.stage;
     if (!st || !st.ids) return;
@@ -1349,16 +1417,23 @@
   (function () {
     let sx = 0, sy = 0, st0 = 0, tracking = false;
     document.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 1 || !e.target.closest('[data-swipe]') || e.target.closest('textarea, input, .sheet')) { tracking = false; return; }
-      tracking = true; sx = e.touches[0].clientX; sy = e.touches[0].clientY; st0 = Date.now();
+      const x0 = e.touches[0] && e.touches[0].clientX;
+      // 画面端（OS の戻るジェスチャー）、入力欄、シート上、テキスト選択中は対象外
+      if (e.touches.length !== 1 || !e.target.closest('[data-swipe]') || e.target.closest('textarea, input, .sheet') || x0 < 24 || x0 > innerWidth - 24 || String(getSelection()).length) { tracking = false; return; }
+      tracking = true; sx = x0; sy = e.touches[0].clientY; st0 = Date.now();
     }, { passive: true });
     document.addEventListener('touchend', (e) => {
       if (!tracking) return;
       tracking = false;
       const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
-      if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8 || Date.now() - st0 > 600) return;
+      if (String(getSelection()).length) return;
+      if (Math.abs(dx) < 90 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - st0 > 600) return;
       if (route === '/quiz' && Q && Q.phase === 'feedback' && dx < 0) nextQuiz();
-      else if (route === '/exam/run') examMove(dx < 0 ? 1 : -1);
+      else if (route === '/exam/run' && S.active && S.active.stage && S.active.stage.ids) {
+        const before = S.active.stage.idx;
+        examMove(dx < 0 ? 1 : -1);
+        if (S.active.stage.idx !== before) toast(`問${S.active.stage.idx + 1}へ移動`);
+      }
     }, { passive: true });
   })();
   if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyPrefs);

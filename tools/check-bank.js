@@ -87,7 +87,8 @@ for (const c of (QB.b1 || []).concat(QB.b2 || [])) {
 }
 for (const c of QB.b1 || []) for (const q of c.questions) {
   const n = Array.from(q.answer.replace(/\n/g, '')).length;
-  if (q.limit && n > q.limit) err(`${c.id} ${q.no} 模範解答が字数超過（${n}/${q.limit}）`);
+  // 過去問は IPA 解答例を原文どおり（複数例の併記や小問の結合を含む）ので字数は確認しない
+  if (!c.set && q.limit && n > q.limit) err(`${c.id} ${q.no} 模範解答が字数超過（${n}/${q.limit}）`);
   for (const kw of q.keywords || []) if (!q.answer.includes(kw)) err(`${c.id} ${q.no} キーワード「${kw}」が模範解答に含まれない`);
 }
 const swFiles = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');

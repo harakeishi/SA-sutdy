@@ -9,6 +9,32 @@
   const B1 = QB.b1 || [];
   const B2 = QB.b2 || [];
   const ALLA = A1.concat(A2);
+  // IPA 過去問：set（年度・時間区分）ごとの問題 ID（問番号順）
+  const SETS = {};
+  ALLA.concat(B1, B2).forEach((q) => { if (q.set) (SETS[q.set] = SETS[q.set] || []).push(q); });
+  Object.values(SETS).forEach((a) => a.sort((x, y) => (x.no || 0) - (y.no || 0)));
+  const SET_TYPE = { am1: 'A1', am2: 'A2', pm1: 'B1', pm2: 'B2' };
+  const ERA = (y) => { const m = /^(\d{4})r(\d\d)([ha])/.exec(y); return m ? `令和${+m[2]}年度 ${m[3] === 'h' ? '春期' : '秋期'}` : y; };
+  const TIME_LABEL = { am1: '午前Ⅰ', am2: '午前Ⅱ', pm1: '午後Ⅰ', pm2: '午後Ⅱ' };
+  function setLabel(set) { const [y, t] = set.split('-'); return `${ERA(y)} ${TIME_LABEL[t] || t}`; }
+  function setType(set) { return SET_TYPE[set.split('-')[1]]; }
+  const isPast = (q) => !!(q && q.set);
+  /** 通常出題に使える問題か（現行で通用しない過去問・重複・設定で除外したもの以外） */
+  function usable(q) {
+    if (!isPast(q)) return true;
+    if (q.obsolete || q.dupOf) return false;
+    return S.settings.includePast !== false;
+  }
+  function figHtml(src, alt) { return src ? `<figure class="qfig"><img src="${esc(src)}" alt="${esc(alt || '図')}" loading="lazy"></figure>` : ''; }
+  function srcTag(q) { return isPast(q) ? `<span class="tag past" title="${esc(q.src)}">過去問 ${esc(setLabel(q.set).replace('令和', 'R').replace('年度 ', '').replace('春期', '春').replace('秋期', '秋'))} 問${q.no}</span>` : ''; }
+  function pastNote(q) {
+    if (!isPast(q)) return '';
+    return `<p class="srcnote">出典：${esc(q.src)}（IPA 公表問題）。解説は本アプリ独自のものです。</p>${q.obsolete ? `<div class="callout">現行の試験では注意：${esc(q.obsolete)}</div>` : ''}`;
+  }
+  /** 本文中の [[図1]] を画像に置き換えて表示 */
+  function scenarioHtml(c) {
+    return esc(c.scenario).replace(/\[\[([^\]]+)\]\]/g, (m, k) => (c.figs && c.figs[k] ? `</div>${figHtml(c.figs[k], k)}<div class="pre">` : m));
+  }
   const QMAP = {};
   ALLA.forEach((q) => (QMAP[q.id] = q));
   const B1MAP = {}, B2MAP = {};
@@ -65,7 +91,7 @@
   function defaultState() {
     return {
       v: 1,
-      settings: { dailyCount: 15, newRatio: 0.4, a1Exempt: false, examDate: '', examDateB: '', confidence: true, retry: true, theme: 'auto', fontScale: 1, haptics: true, effects: true },
+      settings: { dailyCount: 15, newRatio: 0.4, a1Exempt: false, examDate: '', examDateB: '', confidence: true, retry: true, includePast: true, theme: 'auto', fontScale: 1, haptics: true, effects: true },
       cards: {}, log: [], daily: null, exams: [], notes: {}, marks: {}, snapshots: {}, examUsed: {}, active: null,
     };
   }
@@ -86,7 +112,7 @@
     s.newRatio = num(st.newRatio, 0, 1, s.newRatio);
     s.examDate = date(st.examDate);
     s.examDateB = date(st.examDateB);
-    ['a1Exempt', 'confidence', 'retry', 'haptics', 'effects'].forEach((k) => { if (typeof st[k] === 'boolean') s[k] = st[k]; });
+    ['a1Exempt', 'confidence', 'retry', 'haptics', 'effects', 'includePast'].forEach((k) => { if (typeof st[k] === 'boolean') s[k] = st[k]; });
     if (['auto', 'light', 'dark'].includes(st.theme)) s.theme = st.theme;
     s.fontScale = num(st.fontScale, 0.8, 1.4, 1);
     // カードの数値を正規化
@@ -160,7 +186,7 @@
     clearTimeout(t._h); t._h = setTimeout(() => (t.className = ''), 2600);
   }
   function card(id) { return S.cards[id] || (S.cards[id] = SRS.newCard()); }
-  function eligibleA() { return S.settings.a1Exempt ? A2 : ALLA; }
+  function eligibleA() { return (S.settings.a1Exempt ? A2 : ALLA).filter(usable); }
   /** which: 'A'（科目A群の受験日）/'B'（科目B群の受験日） */
   function examDateMs(which) {
     const v = which === 'B' ? S.settings.examDateB : S.settings.examDate;
@@ -192,7 +218,7 @@
    * 未学習は r=0。あくまで「この問題集」に対する指標で、本番の得点予測ではない。
    */
   function predictScore(exam, at) {
-    const pool = exam === 'A1' ? A1 : A2;
+    const pool = (exam === 'A1' ? A1 : A2).filter(usable);
     if (!pool.length) return null;
     let s = 0;
     pool.forEach((q) => { const r = SRS.retrievability(S.cards[q.id], at) || 0; s += r + (1 - r) / 4; });
@@ -281,7 +307,7 @@
   }
   /** 本番形式：分野の構成比を保ってランダム抽出し、分野順に並べる */
   function examSet(exam, n) {
-    const pool = exam === 'A1' ? A1 : A2;
+    const pool = (exam === 'A1' ? A1 : A2).filter(usable);
     const cats = CATS[exam];
     const by = cats.map((c) => shuffle(pool.filter((q) => q.cat === c))
       .sort((a, b) => (S.examUsed[a.id] || 0) - (S.examUsed[b.id] || 0)));
@@ -374,19 +400,20 @@
         <span class="tag ${q.exam.toLowerCase()}">${EXAM[q.exam].label}</span>
         <span class="tag">${esc(q.cat)}</span>
         <span class="tag lv">${'★'.repeat(q.level || 2)}</span>
+        ${srcTag(q)}
         ${!c || !c.last ? '<span class="tag new">NEW</span>' : ''}
         ${isRetry ? '<span class="tag retry">再挑戦</span>' : ''}
         <button class="mark ${S.marks[id] ? 'on' : ''}" data-act="mark" data-id="${id}" title="ブックマーク" aria-label="ブックマーク" aria-pressed="${!!S.marks[id]}">${S.marks[id] ? '★' : '☆'}</button>
         <span class="elapsed" id="elapsed"></span>
       </div>
-      <div class="qtext">${esc(q.q)}</div>
+      <div class="qtext">${esc(q.q)}${figHtml(q.fig, q.figAlt)}</div>
       <div class="choices">`;
     Q.order.forEach((ci, k) => {
       let cls = '';
       if (fb) { if (ci === q.answer) cls = 'correct'; else if (ci === Q.sel) cls = 'wrong'; }
       else if (ci === Q.sel) cls = 'sel';
       const sr = fb ? (ci === q.answer ? '（正解）' : ci === Q.sel ? '（あなたの解答・不正解）' : '') : '';
-      h += `<button class="choice ${cls}" data-act="sel" data-ci="${ci}" ${fb ? 'disabled' : ''} aria-pressed="${ci === Q.sel}"><b>${LABELS[k]}</b><span>${esc(q.choices[ci])}${sr ? `<em class="vh">${sr}</em>` : ''}${fb && ci === q.answer ? '<i class="mk" aria-hidden="true">✓</i>' : fb && ci === Q.sel ? '<i class="mk" aria-hidden="true">✗</i>' : ''}</span></button>`;
+      h += `<button class="choice ${cls}" data-act="sel" data-ci="${ci}" ${fb ? 'disabled' : ''} aria-pressed="${ci === Q.sel}"><b>${LABELS[k]}</b><span>${q.choicesInFig ? `<span class="muted">図の${LABELS[k]}</span>` : esc(q.choices[ci])}${sr ? `<em class="vh">${sr}</em>` : ''}${fb && ci === q.answer ? '<i class="mk" aria-hidden="true">✓</i>' : fb && ci === Q.sel ? '<i class="mk" aria-hidden="true">✗</i>' : ''}</span></button>`;
     });
     h += '</div>';
     let bar = '';
@@ -407,6 +434,7 @@
         ${!L.ok && L.conf === 'sure' ? '<div class="callout">自信があったのに間違えた問題は、訂正すると記憶に残りやすい（過剰修正効果）。なぜ誤解していたかを一言メモしておこう。</div>' : ''}
         ${L.ok && L.conf === 'guess' ? '<div class="callout">勘で正解した問題は「理解済み」とせず、短い間隔で復習します。</div>' : ''}
         <div class="exp">${esc(q.exp)}</div>
+        ${pastNote(q)}
         <label class="note">自分の言葉で要点メモ（次回の解説に表示）
           <textarea data-note="${id}" rows="2" placeholder="例：結合度は低いほど良い。データ結合が最良">${esc(S.notes[id] || '')}</textarea>
         </label>
@@ -452,7 +480,8 @@
   function startExam(kind, opt) {
     opt = opt || {};
     let stages;
-    if (kind === 'dayA') stages = S.settings.a1Exempt ? ['A2'] : ['A1', 'A2'];
+    if (kind === 'set') stages = [setType(opt.set)];
+    else if (kind === 'dayA') stages = S.settings.a1Exempt ? ['A2'] : ['A1', 'A2'];
     else if (kind === 'dayB') stages = ['B1', 'B2'];
     else stages = [kind];
     S.active = { kind, stages, si: 0, stage: null, results: [], started: Date.now(), opt };
@@ -466,7 +495,7 @@
     let st;
     if (type === 'A1' || type === 'A2') {
       const n = o.n || EXAM[type].n;
-      const ids = examSet(type, n);
+      const ids = o.set ? SETS[o.set].map((q) => q.id) : examSet(type, n);
       const orders = {};
       ids.forEach((id) => (orders[id] = QMAP[id].noShuffle ? [0, 1, 2, 3] : shuffle([0, 1, 2, 3])));
       const min = o.min || EXAM[type].min;
@@ -474,8 +503,10 @@
     } else if (type === 'B1') {
       let options;
       if (o.caseId) options = [o.caseId];
+      else if (o.set) options = SETS[o.set].map((c) => c.id);
       else {
-        const info = shuffle(B1.filter((c) => c.cat !== '組込み・IoT')), emb = shuffle(B1.filter((c) => c.cat === '組込み・IoT'));
+        const pool = B1.filter(usable);
+        const info = shuffle(pool.filter((c) => c.cat !== '組込み・IoT')), emb = shuffle(pool.filter((c) => c.cat === '組込み・IoT'));
         options = info.slice(0, emb.length ? 2 : 3).concat(emb.slice(0, 1)).map((c) => c.id).slice(0, 3);
       }
       const min = o.min || (o.caseId ? 45 : EXAM.B1.min);
@@ -483,8 +514,10 @@
     } else {
       let options;
       if (o.caseId) options = [o.caseId];
+      else if (o.set) options = SETS[o.set].map((c) => c.id);
       else {
-        const info = shuffle(B2.filter((c) => c.cat !== '組込み・IoT')), emb = shuffle(B2.filter((c) => c.cat === '組込み・IoT'));
+        const pool = B2.filter(usable);
+        const info = shuffle(pool.filter((c) => c.cat !== '組込み・IoT')), emb = shuffle(pool.filter((c) => c.cat === '組込み・IoT'));
         options = (emb.length && Math.random() < 0.5 ? [info[0], emb[0]] : info.slice(0, 2)).filter(Boolean).map((c) => c.id);
       }
       const min = o.min || EXAM.B2.min;
@@ -640,8 +673,8 @@
     const answered = Object.keys(st.ans).length;
     let h = timerHtml() + `<div class="quiz exam" data-swipe="exam">
       <div class="qhead"><span><b>問${st.idx + 1}</b> <span class="muted">/ ${st.ids.length}</span></span><span class="muted small">解答済 ${answered}/${st.ids.length}</span></div>
-      <div class="qtext">${esc(q.q)}</div><div class="choices">`;
-    st.orders[id].forEach((ci, k) => (h += `<button class="choice ${st.ans[id] === ci ? 'sel' : ''}" data-act="xsel" data-ci="${ci}" aria-pressed="${st.ans[id] === ci}"><b>${LABELS[k]}</b><span>${esc(q.choices[ci])}</span></button>`));
+      <div class="qtext">${esc(q.q)}${figHtml(q.fig, q.figAlt)}</div><div class="choices">`;
+    st.orders[id].forEach((ci, k) => (h += `<button class="choice ${st.ans[id] === ci ? 'sel' : ''}" data-act="xsel" data-ci="${ci}" aria-pressed="${st.ans[id] === ci}"><b>${LABELS[k]}</b><span>${q.choicesInFig ? `<span class="muted">図の${LABELS[k]}</span>` : esc(q.choices[ci])}</span></button>`));
     h += `</div>${st.ans[id] != null ? '<div class="row end"><button class="btn small ghost" data-act="xclear">解答を取り消す</button></div>' : ''}<p class="muted small hide-touch">キー操作：1〜4 選択 ／ ← → 移動 ／ F 見直しマーク。目安は1問あたり約${Math.round((st.min * 60) / st.ids.length)}秒。</p></div>
       <div class="actionbar"><div class="xbar">
         <button class="btn" data-act="xprev" ${st.idx === 0 ? 'disabled' : ''} aria-label="前の問題">${ICON.left}</button>
@@ -676,7 +709,7 @@
       if (st.chosen.length > 1) h += `<div class="tabs">${st.chosen.map((id, i) => `<button class="${i === st.tab ? 'on' : ''}" data-act="b1tab" data-i="${i}">${esc(B1MAP[id].title)}</button>`).join('')}</div>`;
       const pane = st.pane || 'scen';
       h += `<div class="seg only-mobile" role="tablist"><button role="tab" class="${pane === 'scen' ? 'on' : ''}" data-act="b1pane" data-p="scen">問題文</button><button role="tab" class="${pane === 'ans' ? 'on' : ''}" data-act="b1pane" data-p="ans">設問・解答欄</button></div>
-        <div class="split pane-${pane}"><section class="card scen"><h3>${esc(c.title)}</h3><div class="pre">${esc(c.scenario)}</div></section><section class="card ans">`;
+        <div class="split pane-${pane}"><section class="card scen"><h3>${esc(c.title)}</h3>${c.src ? `<p class="srcnote">出典：${esc(c.src)}（IPA 公表問題）</p>` : ''}<div class="pre">${scenarioHtml(c)}</div></section><section class="card ans">`;
       c.questions.forEach((q, qi) => {
         const k = cid + ':' + qi;
         const v = (st.ans[k] || '');
@@ -693,7 +726,7 @@
     let h = `<section class="card"><h2>${EXAM.B1.label} 自己採点</h2><p class="muted small">模範解答と比べて、各設問を「○ 正解 / △ 部分点 / × 誤り」で採点してください。キーワードの一致は<span class="hit">ハイライト</span>表示されます（目安）。字数オーバーは×扱いが基本です。</p></section>`;
     st.chosen.forEach((cid) => {
       const c = B1MAP[cid];
-      h += `<section class="card"><h3>${esc(c.title)}</h3><details><summary>問題文を表示</summary><div class="pre small">${esc(c.scenario)}</div></details>`;
+      h += `<section class="card"><h3>${esc(c.title)}</h3><details><summary>問題文を表示</summary><div class="pre small">${scenarioHtml(c)}</div></details>${c.review ? `<details open><summary>IPA 採点講評</summary><div class="pre small">${esc(c.review)}</div><p class="srcnote">出典：${esc(c.src)} 採点講評（IPA）</p></details>` : ''}${c.src ? '<p class="srcnote">模範解答は IPA 公表の解答例、解説は本アプリ独自です。</p>' : ''}`;
       c.questions.forEach((q, qi) => {
         const k = cid + ':' + qi;
         const mine = st.ans[k] || '';
@@ -719,7 +752,7 @@
       let h = timerHtml() + `<section class="card"><h2>${EXAM.B2.label}：解答する問題を 1 問選択</h2>`;
       st.options.forEach((cid, i) => {
         const c = B2MAP[cid];
-        h += `<div class="pick ${st.chosen === cid ? 'on' : ''}" data-act="b2pick" data-id="${cid}"><div class="row between"><b>問${i + 1}　${esc(c.title)}</b><span class="tag">${esc(c.cat)}</span></div><p class="small pre">${esc(c.body)}</p>
+        h += `<div class="pick ${st.chosen === cid ? 'on' : ''}" data-act="b2pick" data-id="${cid}"><div class="row between"><b>問${i + 1}　${esc(c.title)}</b><span class="tag">${esc(c.cat)}</span></div>${c.src ? `<p class="srcnote">出典：${esc(c.src)}</p>` : ''}<p class="small pre">${esc(c.body)}</p>
           <ol class="small">${c.parts.map((p) => `<li>設問${p.no}：${esc(p.q)}</li>`).join('')}</ol></div>`;
       });
       h += `<div class="row end"><button class="btn ghost" data-act="quitexam">中断</button><button class="btn primary" data-act="b2start" ${st.chosen ? '' : 'disabled'}>この問題で論述開始</button></div></section>`;
@@ -749,7 +782,10 @@
       ${ev.lenOk ? '' : '<p class="warn small">字数要件を満たしていない設問があります。本番では評価が下がる原因になります。</p>'}
       </section>
       <section class="card"><h3>あなたの論述</h3>${c.parts.map((p) => `<details><summary>設問${p.no}（${charCount(st.texts[p.no])}字）</summary><div class="pre small">${esc(st.texts[p.no] || '')}</div></details>`).join('')}
-      <details><summary>骨子例（参考）</summary><div class="pre small">${esc(c.outline || '')}</div></details></section>
+      <details><summary>骨子例（参考・本アプリ独自）</summary><div class="pre small">${esc(c.outline || '')}</div></details>
+      ${c.intent ? `<details><summary>IPA 出題趣旨</summary><div class="pre small">${esc(c.intent)}</div></details>` : ''}
+      ${c.review ? `<details><summary>IPA 採点講評</summary><div class="pre small">${esc(c.review)}</div></details>` : ''}
+      ${c.src ? `<p class="srcnote">出典：${esc(c.src)}（IPA 公表の問題・出題趣旨・採点講評）</p>` : ''}</section>
       <section class="card"><h3>共通チェック</h3>${B2_RUBRIC.map((r, i) => `<label class="chk"><input type="checkbox" data-b2c="g${i}" ${st.checks['g' + i] ? 'checked' : ''}> ${esc(r)}</label>`).join('')}
       <h3>このテーマのポイント</h3>${c.points.map((r, i) => `<label class="chk"><input type="checkbox" data-b2c="p${i}" ${st.checks['p' + i] ? 'checked' : ''}> ${esc(r)}</label>`).join('')}
       <div class="row between"><span>自己評価ランク（参考） <b class="rank r${ev.rank}" id="b2rank">${ev.rank}</b></span><button class="btn primary" data-act="b2done">評価を確定</button></div></section>`;
@@ -769,7 +805,7 @@
     let failedAt = -1;
     r.results.forEach((x, i) => { if (failedAt < 0 && !(x.pass != null ? x.pass : x.score >= 60)) failedAt = i; });
     const hasB2 = r.results.some((x) => x.type === 'B2');
-    let h = `<section class="card center"><h2>${isDay ? '本番形式模試' : r.opt && r.opt.caseId ? '演習' : '模試'} 結果</h2>
+    let h = `<section class="card center"><h2>${r.kind === 'set' && r.opt && r.opt.set ? esc(setLabel(r.opt.set)) + '（IPA 過去問）' : isDay ? '本番形式模試' : r.opt && r.opt.caseId ? '演習' : '模試'} 結果</h2>
       ${isDay ? `<div class="big ${failedAt < 0 ? 'pass' : 'fail'}">${failedAt < 0 ? (hasB2 ? '基準到達（B-2は自己評価）' : '基準点クリア') : EXAM[r.results[failedAt].type].label + 'で基準点未満'}</div>` : ''}
       <div class="tiles">${r.results.map((x, i) => `<div class="tile ${isDay && failedAt >= 0 && i > failedAt ? 'dim' : ''}"><div class="muted small">${EXAM[x.type].label}${x.type === 'B2' ? '（自己評価・参考）' : ''}</div><div class="tv ${(x.pass != null ? x.pass : x.score >= 60) ? 'pass' : 'fail'}">${x.type === 'B2' ? 'ランク ' + esc(x.rank) : esc(x.score) + '点'}</div><div class="muted small">${isDay && failedAt >= 0 && i > failedAt ? '本番では採点対象外 ・ ' : ''}${x.correct != null ? esc(x.correct) + '/' + esc(x.total) + '問 ・ ' : ''}${fmtClock(+x.used || 0)}/${esc(x.min)}分</div></div>`).join('')}</div>
       <p class="muted small">合格基準：各科目 60点以上（科目B-2 はランク A）。B-1・B-2 は自己採点なので甘くなりがちです。</p></section>`;
@@ -885,7 +921,8 @@
       <label>問題数 <select name="n"><option>5</option><option selected>10</option><option>20</option><option>30</option><option value="999">全部</option></select></label>
       <label>対象 <select name="f"><option value="all">すべて</option><option value="new">未学習のみ</option><option value="seen">学習済みのみ</option><option value="wrong">間違えたことがある</option><option value="mark">ブックマーク</option></select></label>
       <label>難易度 <select name="lv"><option value="0">すべて</option><option value="1">★ 基本</option><option value="2">★★ 標準</option><option value="3">★★★ 難問のみ</option><option value="23">★★以上</option></select></label>
-            <label>順序 <select name="o"><option value="mix">ランダム（分野を混ぜる）</option><option value="block">分野ごとにまとめる</option></select></label>
+            <label>出典 <select name="sr"><option value="all">すべて</option><option value="orig">オリジナルのみ</option><option value="past">IPA 過去問のみ</option></select></label>
+      <label>順序 <select name="o"><option value="mix">ランダム（分野を混ぜる）</option><option value="block">分野ごとにまとめる</option></select></label>
       </div><p class="muted small">「分野を混ぜる」（インターリーブ）は解き方の選択から練習でき、本番に強くなります。初学の分野は「まとめる」から始めるのも有効です。</p>
       <div class="row end"><button class="btn primary" type="submit">開始</button></div></form></section>`;
     app.innerHTML = h;
@@ -897,6 +934,9 @@
     const n = +fd.get('n'), f = fd.get('f'), o = fd.get('o'), lv = fd.get('lv') || '0';
     let qs = ALLA.filter((q) => cats.includes(q.exam + '|' + q.cat));
     if (lv !== '0') qs = qs.filter((q) => lv.includes(String(q.level || 2)));
+    const sr = fd.get('sr') || 'all';
+    // 出典で絞り込み（「すべて」は設定に従う。現行で通用しない過去問・重複は除外）
+    qs = qs.filter((q) => (sr === 'orig' ? !isPast(q) : sr === 'past' ? isPast(q) && !q.obsolete && !q.dupOf : usable(q)));
     qs = qs.filter((q) => {
       const c = S.cards[q.id];
       if (f === 'new') return !c || !c.last;
@@ -924,13 +964,25 @@
         ${Object.entries(EXAM).map(([k, e]) => `<button class="mode" data-act="exam" data-k="${k}" ${(k === 'B1' && !B1.length) || (k === 'B2' && !B2.length) ? 'disabled' : ''}><b>${e.label}のみ</b><span>${e.sub}${e.n ? ` ・ ${e.n}問` : ''} ・ ${e.min}分</span></button>`).join('')}
         <button class="mode" data-act="exam" data-k="A2" data-n="10" data-min="16"><b>ミニ模試</b><span>A-2 10問・16分（時間感覚の練習）</span></button>
       </div></section>`;
+    const sets = Object.keys(SETS).sort((a, b) => b.localeCompare(a));
+    if (sets.length) {
+      const best = {};
+      S.exams.forEach((r) => { if (r.kind === 'set' && r.opt && r.opt.set) { const x = r.results[0]; const v = x.type === 'B2' ? x.rank : x.score; best[r.opt.set] = best[r.opt.set] == null || (x.type !== 'B2' && v > best[r.opt.set]) ? v : best[r.opt.set]; } });
+      h += `<section class="card"><h2>IPA 過去問（年度別）</h2><p class="muted small">実際の試験1回分を、当時と同じ問題数・制限時間で解きます。午前Ⅰ・Ⅱの正解は IPA 公表の解答例、解説は本アプリ独自です。</p>`;
+      ['am2', 'am1', 'pm1', 'pm2'].forEach((t) => {
+        const ss = sets.filter((x) => x.endsWith('-' + t));
+        if (!ss.length) return;
+        h += `<h3>${TIME_LABEL[t]}（${EXAM[SET_TYPE[t]].label}相当）</h3><div class="modes">${ss.map((x) => `<button class="mode" data-act="pastset" data-set="${x}"><b>${esc(ERA(x.split('-')[0]))}</b><span>${SETS[x].length}${t.startsWith('am') ? '問' : t === 'pm1' ? '問から2問選択' : '問から1問選択'} ・ ${EXAM[SET_TYPE[t]].min}分${best[x] != null ? ` ・ 最高 ${esc(best[x])}` : ''}</span></button>`).join('')}</div>`;
+      });
+      h += '</section>';
+    }
     if (hist.length) {
       const series = {};
       S.exams.forEach((r) => r.results.forEach((x) => { if (x.detail || x.type === 'B1') (series[x.type] = series[x.type] || []).push(x.score); }));
       h += `<section class="card"><h3>得点の推移</h3>${Object.keys(series).length ? Object.entries(series).map(([k, v]) => `<div class="small">${EXAM[k].label}：${v.slice(-10).map((s) => `<span class="sc ${s >= 60 ? 'pass' : 'fail'}">${esc(s)}</span>`).join(' ')}</div>`).join('') : ''}
         <table class="tbl"><tr><th>日時</th><th>種別</th><th>結果</th><th></th></tr>${hist.map((r) => {
           const i = S.exams.indexOf(r);
-          return `<tr><td>${fmtDate(r.t)}</td><td>${r.kind === 'dayA' ? 'A群' : r.kind === 'dayB' ? 'B群' : r.kind === 'full' ? '通し' : r.opt && r.opt.caseId ? '演習' : ''} ${r.results.map((x) => EXAM[x.type].label).join('・')}</td><td>${r.results.map((x) => esc(x.type === 'B2' ? x.rank : x.score)).join(' / ')}</td><td><a href="#/exam/result/${i}">詳細</a></td></tr>`;
+          return `<tr><td>${fmtDate(r.t)}</td><td>${r.kind === 'set' && r.opt && r.opt.set ? esc(setLabel(r.opt.set)) : r.kind === 'dayA' ? 'A群' : r.kind === 'dayB' ? 'B群' : r.kind === 'full' ? '通し' : r.opt && r.opt.caseId ? '演習' : ''} ${r.results.map((x) => EXAM[x.type].label).join('・')}</td><td>${r.results.map((x) => esc(x.type === 'B2' ? x.rank : x.score)).join(' / ')}</td><td><a href="#/exam/result/${i}">詳細</a></td></tr>`;
         }).join('')}</table></section>`;
     }
     app.innerHTML = h;
@@ -943,7 +995,10 @@
     let h = `<section class="card"><h2>${kind === 'b1' ? '記述式（B-1）演習' : '論述式（B-2）演習'}</h2>
       <p class="muted small">${kind === 'b1' ? '1事例を45分（本番は90分で2問）。解答後に模範解答と比較して自己採点します。' : '1テーマを120分。骨子→論述→ルーブリックで自己評価。書いた論述は結果画面から読み返せます。'}</p>
       <div class="modes">`;
-    list.forEach((c) => (h += `<button class="mode" data-act="${kind}" data-id="${c.id}"><b>${esc(c.title)}</b><span>${esc(c.cat)}${done[c.id] != null ? ` ・ 前回 ${done[c.id]}` : ''}</span></button>`));
+    const item = (c) => `<button class="mode" data-act="${kind}" data-id="${c.id}"><b>${esc(c.title)}</b><span>${c.src ? esc(setLabel(c.set)) + ' 問' + c.no + ' ・ ' : ''}${esc(c.cat)}${done[c.id] != null ? ` ・ 前回 ${done[c.id]}` : ''}</span></button>`;
+    const past = list.filter((c) => c.src), orig = list.filter((c) => !c.src);
+    if (past.length) h += `<h3>IPA 過去問</h3><div class="modes">${past.slice().sort((a, b) => b.set.localeCompare(a.set) || a.no - b.no).map(item).join('')}</div><h3>オリジナル問題</h3><div class="modes">`;
+    h += orig.map(item).join('');
     h += '</div></section>';
     if (!list.length) h += '<p class="muted">問題データがありません。</p>';
     app.innerHTML = h;
@@ -1063,6 +1118,7 @@
       <label class="chk"><input type="checkbox" name="a1Exempt" ${s.a1Exempt ? 'checked' : ''}> 科目A-1 免除（応用情報技術者試験の合格／高度試験・情報処理安全確保支援士試験の合格／高度試験・支援士試験の科目A-1（旧午前Ⅰ）で基準点以上、のいずれかから2年間）</label>
       <label class="chk"><input type="checkbox" name="confidence" ${s.confidence ? 'checked' : ''}> 解答時に自信度を選ぶ（推奨：復習間隔の精度が上がる）</label>
       <label class="chk"><input type="checkbox" name="retry" ${s.retry ? 'checked' : ''}> 間違えた問題をセッション内で再出題する</label>
+      <label class="chk"><input type="checkbox" name="includePast" ${s.includePast !== false ? 'checked' : ''}> IPA 過去問を「今日の学習」や演習にも混ぜる（年度別模試はこの設定に関係なく使えます）</label>
       <h3>表示</h3>
       <label>テーマ <select name="theme">${[['auto', '端末の設定に合わせる'], ['light', 'ライト'], ['dark', 'ダーク']].map(([v, l]) => `<option value="${v}" ${s.theme === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>文字サイズ <select name="fontScale">${[[0.9, '小'], [1, '標準'], [1.12, '大'], [1.25, '特大']].map(([v, l]) => `<option value="${v}" ${s.fontScale == v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -1075,7 +1131,8 @@
       <label class="btn">バックアップを読み込む<input type="file" id="importf" accept="application/json" hidden></label>
       <button class="btn" data-act="redaily">今日の問題を作り直す</button>
       <button class="btn danger" data-act="reset">全データを消去</button></div>
-      <p class="muted small">収録問題：A-1 ${A1.length}問 ／ A-2 ${A2.length}問 ／ B-1 ${B1.length}事例 ／ B-2 ${B2.length}テーマ</p></section>`;
+      <p class="muted small">収録問題：A-1 ${A1.length}問 ／ A-2 ${A2.length}問 ／ B-1 ${B1.length}事例 ／ B-2 ${B2.length}テーマ（うち IPA 過去問 ${ALLA.concat(B1, B2).filter(isPast).length}）</p>
+      <p class="muted small">IPA 過去問は、IPA が公表している問題を出典を明記して掲載しています（教育目的での利用は許諾不要と IPA が案内）。正解は IPA 公表の解答例、解説・骨子例は本アプリ独自です。</p></section>`;
   }
 
   function viewGuide() {
@@ -1194,6 +1251,7 @@
       case 'next': nextQuiz(); break;
       case 'allcat': $$(`input[value^="${t.dataset.e}|"]`).forEach((i) => (i.checked = true)); break;
       // 模試
+      case 'pastset': if (S.active && !confirm('受験中の模試を破棄して新しく始めますか？')) return; startExam('set', { set: t.dataset.set }); break;
       case 'exam': {
         if (S.active && !confirm('受験中の模試を破棄して新しく始めますか？')) return;
         const k = t.dataset.k;
@@ -1302,6 +1360,9 @@
       s.a1Exempt = !!fd.get('a1Exempt');
       s.confidence = !!fd.get('confidence');
       s.retry = !!fd.get('retry');
+      const prevPast = s.includePast !== false;
+      s.includePast = !!fd.get('includePast');
+      if (prevPast !== s.includePast && S.daily) { const done = S.daily.done; buildDaily(); S.daily.done = done; }
       s.theme = ['auto', 'light', 'dark'].includes(fd.get('theme')) ? fd.get('theme') : 'auto';
       s.fontScale = +fd.get('fontScale') || 1;
       s.haptics = !!fd.get('haptics');

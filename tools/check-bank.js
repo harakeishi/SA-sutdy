@@ -34,7 +34,7 @@ const ids = new Set();
 for (const k of ['a1', 'a2']) {
   const a = QB[k] || [];
   console.log(`\n■ ${k.toUpperCase()}：${a.length}問`);
-  const pos = [0, 0, 0, 0], lv = [0, 0, 0], cats = {};
+  const pos = [0, 0, 0, 0], lv = [0, 0, 0], cats = {}, past = {}, obsolete = [];
   const lenR = [0, 0, 0, 0]; let lenN = 0;
   const numR = [0, 0, 0, 0]; let numN = 0;
   for (const q of a) {
@@ -45,7 +45,17 @@ for (const k of ['a1', 'a2']) {
     if (!(q.answer >= 0 && q.answer <= 3)) err(`${q.id} answer が範囲外`);
     if (!q.q || !q.exp) err(`${q.id} 問題文または解説が空`);
     if (!q.noShuffle && /^[アイウエ][はがの、]/.test(q.choices.join('|'))) err(`${q.id} 選択肢が記号を参照（noShuffle が必要）`);
-    pos[q.answer]++; lv[(q.level || 2) - 1]++; cats[q.cat] = (cats[q.cat] || 0) + 1;
+    lv[(q.level || 2) - 1]++; cats[q.cat] = (cats[q.cat] || 0) + 1;
+    if (q.set) {
+      // IPA 過去問：原文どおりなので偏りの集計からは除外し、出典・図・順序を確認
+      past[q.set] = (past[q.set] || 0) + 1;
+      if (!q.src) err(`${q.id} 出典 src がない`);
+      if (!q.noShuffle) err(`${q.id} 過去問は noShuffle: true にする`);
+      if (q.fig && !fs.existsSync(path.join(root, q.fig))) err(`${q.id} 図 ${q.fig} がない`);
+      if (q.obsolete) obsolete.push(q.id);
+      continue;
+    }
+    pos[q.answer]++;
     const L = q.choices.map((c) => c.length);
     if (isNumeric(q)) {
       const v = q.choices.map(num);
@@ -58,7 +68,11 @@ for (const k of ['a1', 'a2']) {
   }
   console.log(`  分野：${CATS[k].map((c) => `${c} ${cats[c] || 0}`).join('、')}`);
   console.log(`  難易度：★ ${lv[0]} ／ ★★ ${lv[1]} ／ ★★★ ${lv[2]}`);
-  console.log(`  正解の位置（元データ）：${pos.join(' / ')}`);
+  if (Object.keys(past).length) {
+    console.log(`  IPA 過去問：${Object.entries(past).sort().map(([k, v]) => `${k} ${v}問`).join('、')}${obsolete.length ? `（現行注意 ${obsolete.length}問：${obsolete.join(', ')}）` : ''}`);
+    Object.entries(past).forEach(([k, v]) => { const need = k.endsWith('am1') ? 30 : 25; if (v !== need) err(`${k} の問題数が ${v}（本来 ${need}）`); });
+  }
+  console.log(`  正解の位置（オリジナル問題）：${pos.join(' / ')}`);
   console.log(`  文章型 ${lenN}問の正解の長さ順位（最長→最短）：${lenR.map((x) => pct(x, lenN)).join(' / ')}`);
   console.log(`  数値型 ${numN}問の正解の大小順位（最小→最大）：${numR.map((x) => pct(x, numN)).join(' / ')}`);
   // 偶然（25%）から大きく外れたら警告
@@ -67,6 +81,10 @@ for (const k of ['a1', 'a2']) {
   });
 }
 for (const k of ['b1', 'b2']) console.log(`\n■ ${k.toUpperCase()}：${(QB[k] || []).length}${k === 'b1' ? '事例' : 'テーマ'}`);
+for (const c of (QB.b1 || []).concat(QB.b2 || [])) {
+  if (c.set && !c.src) err(`${c.id} 出典 src がない`);
+  for (const f of Object.values(c.figs || {})) if (!fs.existsSync(path.join(root, f))) err(`${c.id} 図 ${f} がない`);
+}
 for (const c of QB.b1 || []) for (const q of c.questions) {
   const n = Array.from(q.answer.replace(/\n/g, '')).length;
   if (q.limit && n > q.limit) err(`${c.id} ${q.no} 模範解答が字数超過（${n}/${q.limit}）`);

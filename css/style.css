@@ -384,3 +384,10 @@ body.sheet-open { overflow: hidden; }
 @media (hover: none) { .btn.small { min-height: 44px; } }
 select { max-width: 100%; }
 .nv.done::before { content: ""; }
+
+/* IPA 過去問 */
+.qfig { margin: 12px 0 0; }
+.qfig img { display: block; max-width: 100%; height: auto; background: #fff; border-radius: 8px; border: 1px solid var(--border); }
+.scen .qfig { margin: 10px 0; }
+.tag.past { color: var(--accent); border-color: var(--accent); }
+.srcnote { font-size: 0.75rem; color: var(--muted); margin: 6px 0; }

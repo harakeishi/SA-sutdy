@@ -182,7 +182,7 @@ window.QB.a1 = (window.QB.a1 || []).concat([
     answer: 2, noShuffle: true,
     fig: "past/img/p-2025r07h-am1-15.png",
     figAlt: "上が上位層（アプリケーション層），下が下位層（物理層）。A：上から IPsec，L2TP，TLS。B：IPsec，TLS，L2TP。C：TLS，IPsec，L2TP。D：TLS，L2TP，IPsec。",
-    exp: "TLS は TCP の上で動作し，トランスポート層とアプリケーション層の間（セッション層付近）に位置する。IPsec は IP パケットを暗号化・認証するネットワーク層のプロトコル。L2TP はデータリンク層（PPP フレーム）をトンネリングするデータリンク層のプロトコルである。したがって上位から TLS，IPsec，L2TP の順となる C が正解。L2TP を IPsec より上に置く D や，TLS を最下位に置く A・B は誤りである。",
+    exp: "TLS は TCP の上で動作し，トランスポート層とアプリケーション層の間（セッション層付近）に位置する。IPsec は IP パケットを暗号化・認証するネットワーク層のプロトコル。L2TP はデータリンク層（PPP フレーム）をトンネリングするデータリンク層のプロトコルである。したがって上位から TLS，IPsec，L2TP の順となる C が正解。L2TP を IPsec より上に置く D や，IPsec を最上位に置く A・B は誤りである。",
     level: 2, obsolete: ""
   },
   {

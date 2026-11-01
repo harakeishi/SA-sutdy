@@ -1,0 +1,10 @@
+{
+  "name": "SA Study システムアーキテクト試験対策",
+  "short_name": "SA Study",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f5f7fa",
+  "theme_color": "#1f4e79",
+  "lang": "ja",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

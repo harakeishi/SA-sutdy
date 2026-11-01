@@ -391,3 +391,11 @@ select { max-width: 100%; }
 .scen .qfig { margin: 10px 0; }
 .tag.past { color: var(--accent); border-color: var(--accent); }
 .srcnote { font-size: 0.75rem; color: var(--muted); margin: 6px 0; }
+.qfig img { cursor: zoom-in; }
+.qfig figcaption { text-align: right; margin: 2px 0 0; }
+.zoomer { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.85); display: flex; flex-direction: column; padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom)); }
+.zoomer .zclose { align-self: flex-end; color: #fff; }
+.zoomer .zbody { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y pinch-zoom; }
+.zoomer .zbody img { display: block; width: auto; max-width: none; min-width: 100%; background: #fff; border-radius: 6px; }
+@media (min-width: 760px) { .zoomer .zbody img { min-width: 0; max-width: 100%; margin: 0 auto; } }
+.zoomer .zalt { color: #ddd; font-size: 0.8125rem; margin: 8px 4px 0; }

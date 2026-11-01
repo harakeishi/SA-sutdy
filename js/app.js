@@ -25,7 +25,20 @@
     if (q.obsolete || q.dupOf) return false;
     return S.settings.includePast !== false;
   }
-  function figHtml(src, alt) { return src ? `<figure class="qfig"><img src="${esc(src)}" alt="${esc(alt || '図')}" loading="lazy"></figure>` : ''; }
+  function figHtml(src, alt) { return src ? `<figure class="qfig"><img src="${esc(src)}" alt="${esc(alt || '図')}" loading="lazy" data-zoom="1" tabindex="0" role="button" aria-label="図を拡大表示"><figcaption class="srcnote">タップで拡大</figcaption></figure>` : ''; }
+  /** 図の拡大表示（横スクロール・ピンチで細部まで読める） */
+  function openZoom(img) {
+    const o = document.createElement('div');
+    o.className = 'zoomer'; o.setAttribute('role', 'dialog'); o.setAttribute('aria-label', '図の拡大表示');
+    o.innerHTML = `<button class="iconbtn zclose" aria-label="閉じる">${ICON.close}</button><div class="zbody"><img src="${img.getAttribute('src')}" alt="${esc(img.alt)}"></div><p class="zalt">${esc(img.alt)}</p>`;
+    const close = () => { o.remove(); document.removeEventListener('keydown', onKey, true); img.focus({ preventScroll: true }); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    o.addEventListener('click', (e) => { if (e.target === o || e.target.closest('.zclose')) close(); });
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(o);
+    o.querySelector('.zclose').focus();
+  }
+  document.addEventListener('click', (e) => { const im = e.target.closest('img[data-zoom]'); if (im) openZoom(im); });
   function srcTag(q) { return isPast(q) ? `<span class="tag past" title="${esc(q.src)}">過去問 ${esc(setLabel(q.set).replace('令和', 'R').replace('年度 ', '').replace('春期', '春').replace('秋期', '秋'))} 問${q.no}</span>` : ''; }
   function pastNote(q) {
     if (!isPast(q)) return '';

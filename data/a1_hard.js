@@ -1,4 +1,4 @@
-// 科目A-1（高度共通）オリジナル練習問題 難問（level 3）18問
+// 科目A-1（高度共通）オリジナル練習問題 難問中心の18問（level は各問に記載）
 window.QB = window.QB || {};
 window.QB.a1 = (window.QB.a1 || []).concat([
   {

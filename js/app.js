@@ -31,15 +31,16 @@
     { k: 'maybe', label: 'たぶん', key: 's' },
     { k: 'guess', label: '勘', key: 'd' },
   ];
+  // IPA の論述式の評価観点（充足度・具体性・妥当性・一貫性・見識・洞察力/行動力・独創性/先見性・表現力）に対応
   const B2_RUBRIC = [
-    '設問で問われていることに、設問ごとに正面から答えている',
-    'システムアーキテクトの立場で、自分が判断・設計した内容として書いている',
-    '固有名詞・数値・制約など、事例に具体性がある',
-    '設計や判断の「理由・根拠」を明示している',
-    '複数の案を比較し、トレードオフを検討した過程が書かれている',
-    '設問ア・イ・ウの内容が一貫しており、前後で矛盾がない',
-    '設問ウで、客観的な評価・残った課題・改善策まで述べている',
-    '章立て・段落が整理され、採点者が読みやすい構成になっている',
+    '【充足度】設問ア・イ・ウで問われていることに、設問ごとに漏れなく正面から答えている',
+    '【具体性】固有の状況・数値・制約を示し、自分が担当した事例として具体的に書いている',
+    '【妥当性】設計や判断の内容が、示した状況・制約に照らして技術的に妥当である',
+    '【一貫性】設問ア・イ・ウの内容が一貫しており、前後で矛盾がない',
+    '【見識に基づく主張】判断の理由・根拠を、システムアーキテクトとしての見識に基づいて述べている',
+    '【洞察力・行動力】複数案の比較やトレードオフの検討、関係者への働きかけなど、自ら考え行動した過程がある',
+    '【独創性・先見性】ありきたりな対策にとどまらない工夫や、将来を見据えた考慮がある',
+    '【表現力】章立て・段落が整理され、採点者が読みやすい文章になっている',
   ];
 
   const SRS = window.SRS, Charts = window.Charts;
@@ -54,19 +55,60 @@
   function defaultState() {
     return {
       v: 1,
-      settings: { dailyCount: 15, newRatio: 0.4, a1Exempt: false, examDate: '', confidence: true, retry: true },
+      settings: { dailyCount: 15, newRatio: 0.4, a1Exempt: false, examDate: '', examDateB: '', confidence: true, retry: true },
       cards: {}, log: [], daily: null, exams: [], notes: {}, marks: {}, snapshots: {}, examUsed: {}, active: null,
     };
   }
-  let S = load();
+  let S;
+  const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+  /** 読み込んだデータを検証・正規化する（壊れたバックアップや旧データで画面が壊れないように） */
+  function normalize(d) {
+    const def = defaultState();
+    if (!isObj(d)) return def;
+    const out = def;
+    ['cards', 'notes', 'marks', 'snapshots', 'examUsed'].forEach((k) => { if (isObj(d[k])) out[k] = d[k]; });
+    ['log', 'exams'].forEach((k) => { if (Array.isArray(d[k])) out[k] = d[k]; });
+    const st = isObj(d.settings) ? d.settings : {};
+    const s = out.settings;
+    const num = (v, lo, hi, dflt) => { v = +v; return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt; };
+    const date = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
+    s.dailyCount = Math.round(num(st.dailyCount, 3, 100, s.dailyCount));
+    s.newRatio = num(st.newRatio, 0, 1, s.newRatio);
+    s.examDate = date(st.examDate);
+    s.examDateB = date(st.examDateB);
+    ['a1Exempt', 'confidence', 'retry'].forEach((k) => { if (typeof st[k] === 'boolean') s[k] = st[k]; });
+    // カードの数値を正規化
+    Object.keys(out.cards).forEach((id) => {
+      const c = out.cards[id];
+      if (!isObj(c)) { delete out.cards[id]; return; }
+      const n = SRS.newCard();
+      Object.keys(n).forEach((k) => { n[k] = isFinite(+c[k]) ? +c[k] : n[k]; });
+      out.cards[id] = n;
+    });
+    out.log = out.log.filter((l) => isObj(l) && isFinite(+l.t)).map((l) => ({ t: +l.t, id: String(l.id), ok: !!l.ok, conf: typeof l.conf === 'string' ? l.conf : null, ms: +l.ms || 0, m: String(l.m || '') }));
+    out.exams = out.exams.filter((r) => isObj(r) && Array.isArray(r.results) && isFinite(+r.t) && +r.t > 0).map((r) => {
+      r.results = r.results.filter((x) => isObj(x) && EXAM[x.type]).map((x) => Object.assign(x, { score: +x.score || 0, rank: /^[ABCD]$/.test(x.rank) ? x.rank : x.type === 'B2' ? 'D' : undefined }));
+      return r;
+    });
+    if (d.daily && isObj(d.daily) && Array.isArray(d.daily.ids) && isObj(d.daily.done)) out.daily = { date: String(d.daily.date), ids: d.daily.ids.filter((id) => QMAP[id]), done: d.daily.done };
+    out.active = validActive(d.active) ? d.active : null;
+    return out;
+  }
+  /** 受験中データの参照先（問題ID・事例ID）が現在の問題データに存在するか */
+  function validActive(a) {
+    if (!isObj(a) || !Array.isArray(a.stages) || !Array.isArray(a.results) || !a.stages.every((t) => EXAM[t])) return false;
+    const st = a.stage;
+    if (st == null) return true;
+    if (!isObj(st) || !EXAM[st.type]) return false;
+    if (st.ids) return Array.isArray(st.ids) && st.ids.every((id) => QMAP[id]) && isObj(st.ans) && isObj(st.orders);
+    if (st.type === 'B1') return Array.isArray(st.options) && st.options.every((id) => B1MAP[id]) && Array.isArray(st.chosen);
+    if (st.type === 'B2') return Array.isArray(st.options) && st.options.every((id) => B2MAP[id]);
+    return false;
+  }
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const d = JSON.parse(raw);
-        const def = defaultState();
-        return Object.assign(def, d, { settings: Object.assign(def.settings, d.settings || {}) });
-      }
+      if (raw) return normalize(JSON.parse(raw));
     } catch (e) { console.warn(e); }
     return defaultState();
   }
@@ -75,6 +117,14 @@
   }
   let saveTimer = null;
   function saveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); }
+  S = load();
+  // 別タブで更新されたら読み直す（古いタブが新しいデータを上書きしないように）
+  window.addEventListener('storage', (e) => {
+    if (e.key !== KEY || e.newValue == null) return;
+    try { S = normalize(JSON.parse(e.newValue)); } catch (err) { return; }
+    const el = document.activeElement;
+    if (!(el && el.matches && el.matches('textarea, input'))) render();
+  });
 
   // ---------------------------------------------------------------- ユーティリティ
   function shuffle(a) {
@@ -99,12 +149,15 @@
   }
   function card(id) { return S.cards[id] || (S.cards[id] = SRS.newCard()); }
   function eligibleA() { return S.settings.a1Exempt ? A2 : ALLA; }
-  function examDateMs() {
-    if (!S.settings.examDate) return null;
-    const t = new Date(S.settings.examDate + 'T09:00:00').getTime();
+  /** which: 'A'（科目A群の受験日）/'B'（科目B群の受験日） */
+  function examDateMs(which) {
+    const v = which === 'B' ? S.settings.examDateB : S.settings.examDate;
+    if (!v) return null;
+    const t = new Date(v + 'T09:00:00').getTime();
     return isNaN(t) ? null : t;
   }
-  function daysToExam() { const t = examDateMs(); return t == null ? null : Math.ceil((SRS.startOfDay(t) - SRS.startOfDay(Date.now())) / DAY); }
+  function daysTo(t) { return t == null ? null : Math.round((SRS.startOfDay(t) - SRS.startOfDay(Date.now())) / DAY); }
+  function daysToExam(which) { return daysTo(examDateMs(which || 'A')); }
   function catAcc(q) { const c = S.cards[q.id]; return c && c.seen ? c.correct / c.seen : null; }
 
   // ---------------------------------------------------------------- 学習データ集計
@@ -122,13 +175,23 @@
     });
     return { total: pool.length, seen, mastered, due, avgR: rN ? rSum / rN : null };
   }
-  /** 推定得点: 学習済み問題は保持率、未学習は 25%（当て推量）として平均 */
+  /**
+   * 収録問題の想起率（期待正答率）: 思い出せる確率 r に、思い出せなくても四択で当たる 1/4 を加える。
+   * 未学習は r=0。あくまで「この問題集」に対する指標で、本番の得点予測ではない。
+   */
   function predictScore(exam, at) {
     const pool = exam === 'A1' ? A1 : A2;
     if (!pool.length) return null;
     let s = 0;
-    pool.forEach((q) => { const r = SRS.retrievability(S.cards[q.id], at); s += r == null ? 0.25 : Math.max(0.25, r); });
+    pool.forEach((q) => { const r = SRS.retrievability(S.cards[q.id], at) || 0; s += r + (1 - r) / 4; });
     return s / pool.length;
+  }
+  /** 初めて解いたときの正答率（問題を覚えていない状態での実力の目安） */
+  function firstTryAcc(exam) {
+    const first = {};
+    S.log.forEach((l) => { if (!(l.id in first)) first[l.id] = l.ok; });
+    const ids = Object.keys(first).filter((id) => QMAP[id] && QMAP[id].exam === exam);
+    return ids.length >= 10 ? { acc: ids.filter((id) => first[id]).length / ids.length, n: ids.length } : null;
   }
   function streak() {
     const days = new Set(S.log.map((l) => SRS.dayKey(l.t)));
@@ -160,14 +223,16 @@
     while (groups.some((g) => g.length)) groups.forEach((g) => g.length && out.push(g.shift()));
     return out;
   }
-  function buildDaily() {
+  function buildDaily(append) {
     const n = S.settings.dailyCount;
     const now = Date.now();
-    const pool = eligibleA();
+    const keep = append && S.daily && S.daily.date === today() ? S.daily : null;
+    const pool = eligibleA().filter((q) => !(keep && keep.ids.includes(q.id)) && !SRS.reviewedToday(S.cards[q.id], now));
     const due = pool.filter((q) => SRS.isDue(S.cards[q.id], now))
       .sort((a, b) => SRS.retrievability(S.cards[a.id], now) - SRS.retrievability(S.cards[b.id], now));
     const unseen = pool.filter((q) => !(S.cards[q.id] && S.cards[q.id].last));
-    const wantNew = Math.min(unseen.length, Math.round(n * S.settings.newRatio));
+    // 復習待ちが多いときは新規を減らす（復習の積み残しが雪だるま式に増えるのを防ぐ）
+    const wantNew = due.length >= n ? 0 : Math.min(unseen.length, Math.round(n * S.settings.newRatio), n - due.length + Math.round(n * S.settings.newRatio * 0.5));
     const nDue = Math.min(due.length, n - wantNew);
     const picked = due.slice(0, nDue);
     const newQs = interleave(unseen).slice(0, n - picked.length);
@@ -178,8 +243,15 @@
         .sort((a, b) => (SRS.retrievability(S.cards[a.id], now) || 0) - (SRS.retrievability(S.cards[b.id], now) || 0));
       picked.push(...rest.slice(0, n - picked.length));
     }
-    S.daily = { date: today(), ids: interleave(picked).map((q) => q.id), done: {} };
+    const ids = interleave(picked).map((q) => q.id);
+    S.daily = keep ? { date: keep.date, ids: keep.ids.concat(ids), done: keep.done, newPaused: due.length >= n } : { date: today(), ids, done: {}, newPaused: due.length >= n };
     save();
+    return ids;
+  }
+  /** 今日の学習で、まだ解いていない問題（別モードで今日すでに復習した問題は除く） */
+  function dailyRemaining() {
+    const now = Date.now();
+    return S.daily.ids.filter((id) => QMAP[id] && !S.daily.done[id] && !SRS.reviewedToday(S.cards[id], now));
   }
   function ensureDaily() { if (!S.daily || S.daily.date !== today()) buildDaily(); }
 
@@ -201,7 +273,11 @@
     const cats = CATS[exam];
     const by = cats.map((c) => shuffle(pool.filter((q) => q.cat === c))
       .sort((a, b) => (S.examUsed[a.id] || 0) - (S.examUsed[b.id] || 0)));
-    const quota = by.map((g) => (g.length / pool.length) * n);
+    // A-1 は過去の傾向（テクノロジ17・マネジメント5・ストラテジ8）に寄せる。A-2 は収録の構成比
+    const target = exam === 'A1' ? { マネジメント: 5 / 30, ストラテジ: 8 / 30 } : {};
+    const techTotal = pool.filter((q) => !target[q.cat]).length;
+    const techShare = 1 - Object.values(target).reduce((a, b) => a + b, 0);
+    const quota = by.map((g, i) => Math.min(g.length, target[cats[i]] != null ? target[cats[i]] * n : (g.length / (exam === 'A1' ? techTotal : pool.length)) * (exam === 'A1' ? techShare : 1) * n));
     const take = quota.map(Math.floor);
     let rem = n - take.reduce((a, b) => a + b, 0);
     quota.map((q, i) => [q - Math.floor(q), i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (rem > 0 && take[i] < by[i].length) { take[i]++; rem--; } });
@@ -232,7 +308,7 @@
     const c = card(id);
     const before = { interval: c.interval };
     if (!isRetry) {
-      SRS.review(c, SRS.gradeFrom(ok, conf), Date.now());
+      SRS.review(c, SRS.gradeFrom(ok, conf || 'maybe'), Date.now());
       S.log.push({ t: Date.now(), id, ok, conf, ms, m: Q.mode });
       if (Q.mode === 'daily' && S.daily) S.daily.done[id] = ok ? 1 : -1;
     }
@@ -294,7 +370,7 @@
         CONF.forEach((cf) => (h += `<button class="btn conf ${cf.k}" data-act="conf" data-conf="${cf.k}" ${Q.sel == null ? 'disabled' : ''}>${cf.label}<kbd>${cf.key.toUpperCase()}</kbd></button>`));
         h += '</div>';
       } else {
-        h += `<div class="confrow"><button class="btn primary" data-act="conf" data-conf="maybe" ${Q.sel == null ? 'disabled' : ''}>解答する<kbd>⏎</kbd></button></div>`;
+        h += `<div class="confrow"><button class="btn primary" data-act="conf" data-conf="" ${Q.sel == null ? 'disabled' : ''}>解答する<kbd>⏎</kbd></button></div>`;
       }
     } else {
       const L = Q.last;
@@ -311,7 +387,6 @@
         <div class="row end"><button class="btn primary" data-act="next">次へ<kbd>⏎</kbd></button></div>
       </div>`;
     }
-    if (!fb && S.notes[id] && c && c.last) h += '';
     h += '</div>';
     app.innerHTML = h;
     tickElapsed();
@@ -349,7 +424,8 @@
   function startExam(kind, opt) {
     opt = opt || {};
     let stages;
-    if (kind === 'full') stages = S.settings.a1Exempt ? ['A2', 'B1', 'B2'] : ['A1', 'A2', 'B1', 'B2'];
+    if (kind === 'dayA') stages = S.settings.a1Exempt ? ['A2'] : ['A1', 'A2'];
+    else if (kind === 'dayB') stages = ['B1', 'B2'];
     else stages = [kind];
     S.active = { kind, stages, si: 0, stage: null, results: [], started: Date.now(), opt };
     beginStage();
@@ -398,13 +474,18 @@
   }
   function togglePause() {
     const st = S.active.stage;
-    if (st.pausedLeft != null) { st.endsAt = Date.now() + st.pausedLeft; st.pausedLeft = null; st.enter = Date.now(); }
-    else { st.pausedLeft = st.endsAt - Date.now(); trackSpent(); }
+    if (st.pausedLeft != null) { st.endsAt = Date.now() + st.pausedLeft; st.pausedLeft = null; st.enter = Date.now(); st.pausedTotal = (st.pausedTotal || 0) + (Date.now() - (st.pausedAt || Date.now())); }
+    else { trackSpent(); st.pausedLeft = st.endsAt - Date.now(); st.pausedAt = Date.now(); }
     save(); render();
+  }
+  /** 一時停止を除いた経過時間 */
+  function usedTime(st) {
+    const end = st.pausedLeft != null ? st.pausedAt || Date.now() : Date.now();
+    return Math.max(0, Math.min(st.min * 60000, end - st.startedAt - (st.pausedTotal || 0)));
   }
   function trackSpent() {
     const st = S.active && S.active.stage;
-    if (!st || !st.ids || st.pausedLeft != null && st.enter == null) return;
+    if (!st || !st.ids || st.pausedLeft != null) return;
     const id = st.ids[st.idx];
     st.spent[id] = (st.spent[id] || 0) + (Date.now() - (st.enter || Date.now()));
     st.enter = Date.now();
@@ -423,19 +504,21 @@
     detail.forEach((d) => {
       S.examUsed[d.id] = now;
       if (d.chosen == null) return;
-      SRS.review(card(d.id), d.ok ? SRS.GRADE.GOOD : SRS.GRADE.AGAIN, now);
+      // 模試では自信度を聞かないので、正解でも「勘」の可能性を考えて控えめに伸ばす
+      SRS.review(card(d.id), d.ok ? SRS.GRADE.HARD : SRS.GRADE.AGAIN, now);
       S.log.push({ t: now, id: d.id, ok: d.ok, conf: 'exam', ms: d.ms, m: 'exam' });
     });
     snapshot();
-    A.results.push({ type: st.type, score: Math.round((correct / st.ids.length) * 100), correct, total: st.ids.length, detail, used: auto ? st.min * 60000 : Math.min(st.min * 60000, now - st.startedAt), auto: !!auto, min: st.min });
+    A.results.push({ type: st.type, score: Math.round((correct / st.ids.length) * 100), correct, total: st.ids.length, detail, used: auto ? st.min * 60000 : usedTime(st), auto: !!auto, min: st.min });
     nextStage();
   }
   function nextStage() {
     const A = S.active;
     A.stage = null;
     A.si++;
+    A.breakAt = Date.now();
     if (A.si >= A.stages.length) {
-      const passAll = A.results.every((r) => r.pass != null ? r.pass : r.score >= 60);
+      const passAll = A.results.every((r) => (r.pass != null ? r.pass : r.score >= 60));
       const rec = { t: Date.now(), kind: A.kind, results: A.results, pass: passAll, opt: A.opt };
       S.exams.push(rec);
       S.active = null;
@@ -451,17 +534,18 @@
     st.chosen.forEach((cid) => B1MAP[cid].questions.forEach((q, qi) => out.push({ cid, qi, q })));
     return out;
   }
-  function finishB1Answer() { const st = S.active.stage; st.phase = 'grade'; st.pausedLeft = null; st.used = Date.now() - st.startedAt; save(); render(); window.scrollTo(0, 0); }
+  function finishB1Answer() { const st = S.active.stage; st.used = usedTime(st); st.phase = 'grade'; st.pausedLeft = null; save(); render(); window.scrollTo(0, 0); }
   function finishB1Grade() {
     const A = S.active, st = A.stage;
     const qs = b1Questions(st);
     const missing = qs.filter((x) => st.grades[x.cid + ':' + x.qi] == null).length;
     if (missing) { toast(`未採点の設問が ${missing} 個あります`); return; }
-    // 各事例を同じ配点として 100 点満点に換算
+    // 各事例を同じ配点として 100 点満点に換算（本番形式で選択数が足りなければ未解答＝0点扱い）
+    const need = st.options.length === 1 ? 1 : EXAM.B1.pick;
     let sc = 0;
     st.chosen.forEach((cid) => {
       const cq = qs.filter((x) => x.cid === cid);
-      sc += cq.reduce((a, x) => a + st.grades[x.cid + ':' + x.qi], 0) / cq.length / st.chosen.length;
+      sc += cq.reduce((a, x) => a + st.grades[x.cid + ':' + x.qi], 0) / cq.length / need;
     });
     const score = Math.round(sc * 100);
     A.results.push({ type: 'B1', score, chosen: st.chosen, ans: st.ans, grades: st.grades, used: Math.min(st.min * 60000, st.used || 0), min: st.min });
@@ -478,11 +562,11 @@
     if (!lenOk && rank === 'C' && ratio < 0.6) rank = 'D';
     return { lenOk, ratio, rank };
   }
-  function finishB2Write() { const st = S.active.stage; st.phase = 'grade'; st.pausedLeft = null; st.used = Date.now() - st.startedAt; save(); render(); window.scrollTo(0, 0); }
+  function finishB2Write() { const st = S.active.stage; st.used = usedTime(st); st.phase = 'grade'; st.pausedLeft = null; save(); render(); window.scrollTo(0, 0); }
   function finishB2Grade() {
     const A = S.active, st = A.stage;
     const ev = b2Eval(st);
-    A.results.push({ type: 'B2', score: Math.round(ev.ratio * 100), rank: ev.rank, pass: ev.rank === 'A', lenOk: ev.lenOk, chosen: st.chosen, texts: st.texts, outline: st.outline, checks: st.checks, used: Math.min(st.min * 60000, st.used || 0), min: st.min });
+    A.results.push({ type: 'B2', score: Math.round(ev.ratio * 100), rank: ev.rank, pass: ev.rank === 'A', selfEval: true, lenOk: ev.lenOk, chosen: st.chosen, texts: st.texts, outline: st.outline, checks: st.checks, used: Math.min(st.min * 60000, st.used || 0), min: st.min });
     nextStage();
   }
   function quitExam() {
@@ -508,7 +592,7 @@
         <p class="muted">${A.results.map((r) => EXAM[r.type].label).join('・')} 終了</p>
         <h2>次は ${E.label}（${E.sub}）</h2>
         <p>試験時間 ${E.min}分${E.n ? ` ・ ${E.n}問` : ''}</p>
-        <p class="muted small">本番では科目間に休憩があります。準備ができたら開始してください。</p>
+        <p class="muted small">本番の科目間の休憩は最長10分です。<span id="breakt"></span></p>
         <div class="row center"><button class="btn primary" data-act="beginstage">開始する</button><button class="btn ghost" data-act="quitexam">中断</button></div>
       </section>`;
       return;
@@ -630,15 +714,15 @@
     }
     // 自己評価
     const ev = b2Eval(st);
-    let h = `<section class="card"><h2>${EXAM.B2.label} 自己評価</h2><p class="muted small">IPA の論述式は A〜D のランクで評価され、A が合格です。下のチェック項目に該当するものを正直にチェックしてください（8割以上で A 相当の目安）。</p>
+    let h = `<section class="card"><h2>${EXAM.B2.label} 自己評価</h2><p class="muted small">IPA の論述式は A〜D のランクで評価され、A が合格です。下の項目は IPA の評価観点に沿ったセルフチェックです。自己評価は甘くなりがちなので、迷ったらチェックしないでください。ランクはチェック率からの<b>参考値</b>です。設問の指示（字数など）に従わない場合は評価が下がることがあります。</p>
       <div class="lenchk">${c.parts.map((p) => { const n = charCount(st.texts[p.no]); const ok = n >= (p.min || 1) && n <= p.max; return `<span class="kw ${ok ? 'on' : 'bad'}">設問${p.no}：${n}字（${p.min ? p.min + '〜' : ''}${p.max}字）${ok ? '✓' : '✗'}</span>`; }).join(' ')}</div>
-      ${ev.lenOk ? '' : '<p class="warn small">字数要件を満たしていない設問があります。本番では大きく減点・不合格の原因になります。</p>'}
+      ${ev.lenOk ? '' : '<p class="warn small">字数要件を満たしていない設問があります。本番では評価が下がる原因になります。</p>'}
       </section>
       <section class="card"><h3>あなたの論述</h3>${c.parts.map((p) => `<details><summary>設問${p.no}（${charCount(st.texts[p.no])}字）</summary><div class="pre small">${esc(st.texts[p.no] || '')}</div></details>`).join('')}
       <details><summary>骨子例（参考）</summary><div class="pre small">${esc(c.outline || '')}</div></details></section>
       <section class="card"><h3>共通チェック</h3>${B2_RUBRIC.map((r, i) => `<label class="chk"><input type="checkbox" data-b2c="g${i}" ${st.checks['g' + i] ? 'checked' : ''}> ${esc(r)}</label>`).join('')}
       <h3>このテーマのポイント</h3>${c.points.map((r, i) => `<label class="chk"><input type="checkbox" data-b2c="p${i}" ${st.checks['p' + i] ? 'checked' : ''}> ${esc(r)}</label>`).join('')}
-      <div class="row between"><span>推定ランク <b class="rank r${ev.rank}" id="b2rank">${ev.rank}</b></span><button class="btn primary" data-act="b2done">評価を確定</button></div></section>`;
+      <div class="row between"><span>自己評価ランク（参考） <b class="rank r${ev.rank}" id="b2rank">${ev.rank}</b></span><button class="btn primary" data-act="b2done">評価を確定</button></div></section>`;
     app.innerHTML = h;
   }
   function b2Counter(p, v) {
@@ -650,11 +734,15 @@
   function viewExamResult(idx) {
     const r = S.exams[idx];
     if (!r) return go('/exam');
-    const isFull = r.kind === 'full';
-    let h = `<section class="card center"><h2>${isFull ? '本番模試' : r.opt && r.opt.caseId ? '演習' : '模試'} 結果</h2>
-      ${isFull ? `<div class="big ${r.pass ? 'pass' : 'fail'}">${r.pass ? '合格ライン到達' : '不合格'}</div>` : ''}
-      <div class="tiles">${r.results.map((x) => `<div class="tile"><div class="muted small">${EXAM[x.type].label}</div><div class="tv ${(x.pass != null ? x.pass : x.score >= 60) ? 'pass' : 'fail'}">${x.type === 'B2' ? 'ランク ' + x.rank : x.score + '点'}</div><div class="muted small">${x.correct != null ? x.correct + '/' + x.total + '問 ・ ' : ''}${fmtClock(x.used)}/${x.min}分</div></div>`).join('')}</div>
-      <p class="muted small">合格基準：各科目 60点以上（科目B-2 はランク A）</p></section>`;
+    const isDay = r.kind === 'dayA' || r.kind === 'dayB' || r.kind === 'full';
+    // 多段階選抜：前の科目が基準点未満なら、以降は採点対象外
+    let failedAt = -1;
+    r.results.forEach((x, i) => { if (failedAt < 0 && !(x.pass != null ? x.pass : x.score >= 60)) failedAt = i; });
+    const hasB2 = r.results.some((x) => x.type === 'B2');
+    let h = `<section class="card center"><h2>${isDay ? '本番形式模試' : r.opt && r.opt.caseId ? '演習' : '模試'} 結果</h2>
+      ${isDay ? `<div class="big ${failedAt < 0 ? 'pass' : 'fail'}">${failedAt < 0 ? (hasB2 ? '基準到達（B-2は自己評価）' : '基準点クリア') : EXAM[r.results[failedAt].type].label + 'で基準点未満'}</div>` : ''}
+      <div class="tiles">${r.results.map((x, i) => `<div class="tile ${isDay && failedAt >= 0 && i > failedAt ? 'dim' : ''}"><div class="muted small">${EXAM[x.type].label}${x.type === 'B2' ? '（自己評価・参考）' : ''}</div><div class="tv ${(x.pass != null ? x.pass : x.score >= 60) ? 'pass' : 'fail'}">${x.type === 'B2' ? 'ランク ' + esc(x.rank) : esc(x.score) + '点'}</div><div class="muted small">${isDay && failedAt >= 0 && i > failedAt ? '本番では採点対象外 ・ ' : ''}${x.correct != null ? esc(x.correct) + '/' + esc(x.total) + '問 ・ ' : ''}${fmtClock(+x.used || 0)}/${esc(x.min)}分</div></div>`).join('')}</div>
+      <p class="muted small">合格基準：各科目 60点以上（科目B-2 はランク A）。B-1・B-2 は自己採点なので甘くなりがちです。</p></section>`;
     r.results.forEach((x) => {
       if (x.detail) {
         const byCat = {};
@@ -694,25 +782,31 @@
     ensureDaily();
     const st = stats();
     const d = S.daily;
-    const doneN = Object.keys(d.done).length;
-    const dleft = daysToExam();
+    const remainIds = dailyRemaining();
+    const doneN = d.ids.length - remainIds.length;
+    const dA = daysToExam('A'), dB = daysToExam('B');
+    // 次に来る試験日（科目A群→科目B群）を基準にする
+    const dleft = dA != null && dA >= 0 ? dA : dB != null && dB >= 0 ? dB : dA;
     const sk = streak();
-    const pA2 = predictScore('A2'), pA1 = predictScore('A1');
+    const atA = dA != null && dA > 0 ? examDateMs('A') : undefined;
+    const pA2 = predictScore('A2', atA), pA1 = predictScore('A1', atA);
+    const ft2 = firstTryAcc('A2');
     const unseen = st.total - st.seen;
     const pace = dleft && dleft > 0 ? Math.ceil(unseen / dleft) : null;
     const weakCats = catStats('A2').concat(S.settings.a1Exempt ? [] : catStats('A1')).filter((c) => c.acc != null).sort((a, b) => a.acc - b.acc).slice(0, 3);
     let h = '';
     if (S.active) h += `<a class="banner" href="#/exam/run">受験中の模試があります（${S.active.stages.map((s) => EXAM[s].label).join('→')}）。タップして再開 →</a>`;
     h += `<section class="hero">
-      <div class="countdown">${dleft == null ? '<a href="#/settings">試験日を設定</a>' : dleft > 0 ? `試験まで <b>${dleft}</b> 日` : dleft === 0 ? '<b>試験当日！</b>' : '試験日を過ぎています'}</div>
+      <div class="countdown">${dA == null && dB == null ? '<a href="#/settings">試験日を設定</a>' : [['A', dA, '科目A'], ['B', dB, '科目B']].filter((x) => x[1] != null).map(([, n, l]) => (n > 0 ? `${l}まで <b>${n}</b> 日` : n === 0 ? `<b>${l} 試験当日！</b>` : `<span class="muted small">${l} 終了</span>`)).join('　')}</div>
       <div class="streak">🔥 ${sk}日連続</div>
     </section>
     <section class="card daily">
       <div class="row between"><h2>今日の学習</h2><span class="muted">${doneN} / ${d.ids.length}</span></div>
       <div class="progress"><div style="width:${(doneN / Math.max(1, d.ids.length)) * 100}%"></div></div>
       <p class="muted small">復習期限の問題と新しい問題を、分野が偏らないように混ぜた ${d.ids.length} 問。毎日少しずつが最も効率的です。</p>
+      ${d.newPaused ? '<p class="small warn">復習待ちが多いため、今日は新しい問題を出していません。復習を消化すると新規が再開します。</p>' : ''}
       <div class="row">
-        ${doneN < d.ids.length ? `<button class="btn primary big" data-act="daily">${doneN ? '続きから' : 'はじめる'}（残り${d.ids.length - doneN}問）</button>` : '<span class="done">✓ 今日のノルマ達成！</span><button class="btn" data-act="dailymore">もう1セット</button>'}
+        ${remainIds.length ? `<button class="btn primary big" data-act="daily">${doneN ? '続きから' : 'はじめる'}（残り${remainIds.length}問）</button>` : '<span class="done">✓ 今日のノルマ達成！</span><button class="btn" data-act="dailymore">もう1セット</button>'}
         ${st.due ? `<button class="btn" data-act="review">復習待ち ${st.due}問</button>` : ''}
       </div>
     </section>
@@ -720,8 +814,9 @@
       <div class="tile"><div class="muted small">学習済み</div><div class="tv">${st.seen}<small>/${st.total}</small></div></div>
       <div class="tile"><div class="muted small">定着（間隔21日+）</div><div class="tv">${st.mastered}</div></div>
       <div class="tile"><div class="muted small">平均記憶保持率</div><div class="tv">${pct(st.avgR)}</div></div>
-      <div class="tile"><div class="muted small">推定得点 A-2</div><div class="tv ${pA2 >= 0.6 ? 'pass' : ''}">${pA2 == null ? '—' : Math.round(pA2 * 100)}</div></div>
-      ${S.settings.a1Exempt ? '' : `<div class="tile"><div class="muted small">推定得点 A-1</div><div class="tv ${pA1 >= 0.6 ? 'pass' : ''}">${pA1 == null ? '—' : Math.round(pA1 * 100)}</div></div>`}
+      <div class="tile" title="収録問題を今（試験日設定時は科目A試験日に）解いた場合の期待正答率。四択の当て推量を含む。本番の得点予測ではありません"><div class="muted small">収録問題の想起率 A-2${atA ? '（試験日）' : ''}</div><div class="tv">${pA2 == null ? '—' : Math.round(pA2 * 100) + '%'}</div></div>
+      ${S.settings.a1Exempt ? '' : `<div class="tile" title="収録問題に対する指標で、本番の得点予測ではありません"><div class="muted small">収録問題の想起率 A-1${atA ? '（試験日）' : ''}</div><div class="tv">${pA1 == null ? '—' : Math.round(pA1 * 100) + '%'}</div></div>`}
+      <div class="tile" title="各問題を初めて解いたときの正答率。問題を覚えていない状態での実力に近い指標"><div class="muted small">初見正答率 A-2</div><div class="tv">${ft2 ? pct(ft2.acc) + `<small> ${ft2.n}問</small>` : '<small>10問以上で表示</small>'}</div></div>
       <div class="tile"><div class="muted small">未学習</div><div class="tv">${unseen}${pace ? `<small> 1日${pace}問で完了</small>` : ''}</div></div>
     </section>
     <section class="card"><h3>モード</h3><div class="modes">
@@ -774,12 +869,15 @@
 
   function viewExamMenu() {
     const hist = S.exams.slice().reverse().slice(0, 15);
-    const full = S.settings.a1Exempt ? 'A-2 → B-1 → B-2' : 'A-1 → A-2 → B-1 → B-2';
     let h = '';
     if (S.active) h += `<a class="banner" href="#/exam/run">受験中の模試があります。再開する →</a>`;
     h += `<section class="card"><h2>本番模試</h2>
       <p class="muted small">2026年度（CBT方式）の試験構成に準拠。時間内は解説を表示せず、終了後にまとめて採点します。</p>
-      <button class="mode wide" data-act="exam" data-k="full"><b>通し模試（${full}）</b><span>本番1日分。合計 ${(S.settings.a1Exempt ? 0 : 50) + 40 + 90 + 120}分</span></button>
+      <div class="modes">
+        <button class="mode wide" data-act="exam" data-k="dayA"><b>科目A群の日（${S.settings.a1Exempt ? 'A-2' : 'A-1 → A-2'}）</b><span>本番と同じく連続実施。合計 ${(S.settings.a1Exempt ? 0 : 50) + 40}分</span></button>
+        <button class="mode wide" data-act="exam" data-k="dayB" ${B1.length && B2.length ? '' : 'disabled'}><b>科目B群の日（B-1 → B-2）</b><span>本番と同じく連続実施。合計 210分</span></button>
+      </div>
+      <p class="muted small">本番（CBT）は科目A群と科目B群を別の日に受験します。科目間の休憩は最長10分。採点は多段階選抜（A-1→A-2→B-1→B-2 の順に、基準点に達しないとそれ以降は採点されない）です。</p>
       <div class="modes">
         ${Object.entries(EXAM).map(([k, e]) => `<button class="mode" data-act="exam" data-k="${k}" ${(k === 'B1' && !B1.length) || (k === 'B2' && !B2.length) ? 'disabled' : ''}><b>${e.label}のみ</b><span>${e.sub}${e.n ? ` ・ ${e.n}問` : ''} ・ ${e.min}分</span></button>`).join('')}
         <button class="mode" data-act="exam" data-k="A2" data-n="10" data-min="16"><b>ミニ模試</b><span>A-2 10問・16分（時間感覚の練習）</span></button>
@@ -787,10 +885,10 @@
     if (hist.length) {
       const series = {};
       S.exams.forEach((r) => r.results.forEach((x) => { if (x.detail || x.type === 'B1') (series[x.type] = series[x.type] || []).push(x.score); }));
-      h += `<section class="card"><h3>得点の推移</h3>${Object.keys(series).length ? Object.entries(series).map(([k, v]) => `<div class="small">${EXAM[k].label}：${v.slice(-10).map((s) => `<span class="sc ${s >= 60 ? 'pass' : 'fail'}">${s}</span>`).join(' ')}</div>`).join('') : ''}
+      h += `<section class="card"><h3>得点の推移</h3>${Object.keys(series).length ? Object.entries(series).map(([k, v]) => `<div class="small">${EXAM[k].label}：${v.slice(-10).map((s) => `<span class="sc ${s >= 60 ? 'pass' : 'fail'}">${esc(s)}</span>`).join(' ')}</div>`).join('') : ''}
         <table class="tbl"><tr><th>日時</th><th>種別</th><th>結果</th><th></th></tr>${hist.map((r) => {
           const i = S.exams.indexOf(r);
-          return `<tr><td>${fmtDate(r.t)}</td><td>${r.kind === 'full' ? '通し' : r.opt && r.opt.caseId ? '演習' : ''} ${r.results.map((x) => EXAM[x.type].label).join('・')}</td><td>${r.results.map((x) => (x.type === 'B2' ? x.rank : x.score)).join(' / ')}</td><td><a href="#/exam/result/${i}">詳細</a></td></tr>`;
+          return `<tr><td>${fmtDate(r.t)}</td><td>${r.kind === 'dayA' ? 'A群' : r.kind === 'dayB' ? 'B群' : r.kind === 'full' ? '通し' : r.opt && r.opt.caseId ? '演習' : ''} ${r.results.map((x) => EXAM[x.type].label).join('・')}</td><td>${r.results.map((x) => esc(x.type === 'B2' ? x.rank : x.score)).join(' / ')}</td><td><a href="#/exam/result/${i}">詳細</a></td></tr>`;
         }).join('')}</table></section>`;
     }
     app.innerHTML = h;
@@ -826,22 +924,33 @@
       return true;
     });
   }
+  function browseItems(list) {
+    const now = Date.now();
+    return list.slice(0, 200).map((q) => {
+      const c = S.cards[q.id];
+      const r = SRS.retrievability(c, now);
+      return `<li><a href="#" data-act="one" data-id="${q.id}"><span class="tag ${q.exam.toLowerCase()}">${q.exam === 'A1' ? 'A-1' : 'A-2'}</span> ${esc(q.q.slice(0, 70))}${q.q.length > 70 ? '…' : ''}</a>
+          <span class="small muted">${esc(q.cat)} ・ ${c && c.seen ? `${c.correct}/${c.seen}回正解 ・ 保持 ${pct(r)}` : '未学習'}${S.marks[q.id] ? ' ・ ★' : ''}</span>
+          ${S.notes[q.id] ? `<div class="small memo">📝 ${esc(S.notes[q.id])}</div>` : ''}</li>`;
+    }).join('');
+  }
+  function renderBrowseList() {
+    const ul = $('#blist');
+    if (!ul) return;
+    const list = browseList();
+    ul.innerHTML = browseItems(list);
+    const btn = $('[data-act=browsego]');
+    if (btn) { btn.textContent = `この${list.length}問を演習`; btn.disabled = !list.length; }
+  }
   function viewBrowse() {
     const list = browseList();
     const b = browseState;
-    const now = Date.now();
     let h = `<section class="card"><h2>問題一覧</h2><div class="row wrap">
       <input type="search" id="bq" placeholder="キーワード検索" value="${esc(b.q)}">
       <select id="be"><option value="">全科目</option>${['A2', 'A1'].map((e) => `<option value="${e}" ${b.e === e ? 'selected' : ''}>${EXAM[e].label}すべて</option>${CATS[e].map((c) => `<option value="${e}|${esc(c)}" ${b.e === e + '|' + c ? 'selected' : ''}>　${esc(c)}</option>`).join('')}`).join('')}</select>
       <select id="bs">${[['', 'すべて'], ['new', '未学習'], ['due', '復習待ち'], ['mastered', '定着'], ['wrong', '間違えた'], ['mark', 'ブックマーク'], ['note', 'メモあり']].map(([v, l]) => `<option value="${v}" ${b.s === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <button class="btn primary" data-act="browsego" ${list.length ? '' : 'disabled'}>この${list.length}問を演習</button></div>
-      <ul class="blist">${list.slice(0, 200).map((q) => {
-        const c = S.cards[q.id];
-        const r = SRS.retrievability(c, now);
-        return `<li><a href="#" data-act="one" data-id="${q.id}"><span class="tag ${q.exam.toLowerCase()}">${q.exam === 'A1' ? 'A-1' : 'A-2'}</span> ${esc(q.q.slice(0, 70))}${q.q.length > 70 ? '…' : ''}</a>
-          <span class="small muted">${esc(q.cat)} ・ ${c && c.seen ? `${c.correct}/${c.seen}回正解 ・ 保持 ${pct(r)}` : '未学習'}${S.marks[q.id] ? ' ・ ★' : ''}</span>
-          ${S.notes[q.id] ? `<div class="small memo">📝 ${esc(S.notes[q.id])}</div>` : ''}</li>`;
-      }).join('')}</ul></section>`;
+      <ul class="blist" id="blist">${browseItems(list)}</ul></section>`;
     app.innerHTML = h;
   }
 
@@ -904,11 +1013,12 @@
   function viewSettings() {
     const s = S.settings;
     app.innerHTML = `<section class="card"><h2>設定</h2><form id="sform" class="form">
-      <label>試験日 <input type="date" name="examDate" value="${esc(s.examDate)}"></label>
-      <p class="muted small">2026年度はCBT方式で前期実施（科目B：2026/11/11〜11/23）。2027年度から新試験制度へ移行予定のため、次回の受験予定日を入れてください。</p>
-      <label>今日の学習の問題数 <input type="number" name="dailyCount" min="3" max="100" value="${s.dailyCount}"></label>
+      <label>科目A群の受験日 <input type="date" name="examDate" value="${esc(s.examDate)}"></label>
+      <label>科目B群の受験日 <input type="date" name="examDateB" value="${esc(s.examDateB)}"></label>
+      <p class="muted small">CBT方式では科目A群と科目B群を別の日に受験します（2026年度：科目A 10/17〜10/27、科目B 11/11〜11/23）。2027年度から新試験制度へ移行予定のため、次回の受験予定日を入れてください。「直前総仕上げ」と想起率は科目A群の受験日を基準にします。</p>
+      <label>今日の学習の問題数 <input type="number" name="dailyCount" min="3" max="100" value="${esc(s.dailyCount)}"></label>
       <label>新しい問題の割合（復習が少ないとき） <select name="newRatio">${[0.2, 0.3, 0.4, 0.5, 0.7].map((v) => `<option value="${v}" ${s.newRatio == v ? 'selected' : ''}>${v * 100}%</option>`).join('')}</select></label>
-      <label class="chk"><input type="checkbox" name="a1Exempt" ${s.a1Exempt ? 'checked' : ''}> 科目A-1 免除（応用情報合格・高度試験/A-1 で基準点以上 から2年以内）</label>
+      <label class="chk"><input type="checkbox" name="a1Exempt" ${s.a1Exempt ? 'checked' : ''}> 科目A-1 免除（応用情報技術者試験の合格／高度試験・情報処理安全確保支援士試験の合格／高度試験・支援士試験の科目A-1（旧午前Ⅰ）で基準点以上、のいずれかから2年間）</label>
       <label class="chk"><input type="checkbox" name="confidence" ${s.confidence ? 'checked' : ''}> 解答時に自信度を選ぶ（推奨：復習間隔の精度が上がる）</label>
       <label class="chk"><input type="checkbox" name="retry" ${s.retry ? 'checked' : ''}> 間違えた問題をセッション内で再出題する</label>
       <div class="row end"><button class="btn primary">保存</button></div></form></section>
@@ -924,18 +1034,20 @@
     app.innerHTML = `<article class="card guide">
     <h2>このアプリに取り入れた学習法</h2>
     <h3>1. 間隔反復（Spaced Repetition）</h3>
-    <p>エビングハウスの忘却曲線が示すように、記憶は時間とともに指数的に失われます。忘れかけた頃に復習すると記憶が強化され、次に忘れるまでの期間が延びます（分散学習効果）。分散学習は集中学習より最終テストの成績が高いことがメタ分析でも確認されています（Cepeda et al., 2006 / Latimier et al., 2021）。</p>
-    <p>本アプリは SM-2 系のアルゴリズムで、問題ごとに次回の復習日を自動計算します。正解するたびに間隔は 1日 → 3日 → 約1週間 → 数週間 と伸び、間違えると1日に戻ります。<b>間隔が21日以上になった問題を「定着」</b>として数えています。</p>
+    <p>記憶は学習直後に急速に失われ、その後ゆるやかに失われていきます（エビングハウスの忘却曲線。べき関数で近似されることが多い：Wixted & Ebbesen, 1991）。忘れかけた頃に思い出すと記憶が強化され、次に忘れるまでの期間が延びます（分散学習効果）。分散学習は集中学習より最終テストの成績が高いことがメタ分析でも確認されています（Cepeda et al., 2006 / Latimier et al., 2021）。</p>
+    <p>本アプリは SM-2 系のアルゴリズムで、問題ごとに次回の復習日を自動計算します。期日どおりに正解するたびに間隔は 1日 → 約3日 → 約1週間 → 数週間 と伸び、間違えると1日に戻ります。<b>同じ日に何度解き直しても間隔は伸びません</b>（間を空けて思い出すことに効果があるため）。期日より早く復習した場合も伸び幅を小さくします。<b>間隔が21日以上になった問題を「定着」</b>として数えています。</p>
+    <p>復習待ちが1日の問題数を超えたときは、新しい問題を一時停止して復習を優先します（積み残しが雪だるま式に増えるのを防ぐため）。</p>
     <h3>2. 想起練習（テスト効果）</h3>
-    <p>テキストを読み返すより、問題を解いて思い出す方が長期記憶に残ります（Roediger & Karpicke, 2006）。だからこのアプリは「読む」より「解く」が中心です。模試の解答も復習スケジュールに反映されます。</p>
+    <p>テキストを読み返すより、問題を解いて思い出す方が長期記憶に残ります（Roediger & Karpicke, 2006）。だからこのアプリは「読む」より「解く」が中心です。模試の解答も復習スケジュールに反映されます（自信度を聞かないため、正解でも控えめに間隔を伸ばします）。</p>
+    <p><b>注意：</b>同じ問題集を繰り返すと「問題と答えを覚えた」状態になりやすく、本番の初見問題での実力とは別物になります。ホームの「初見正答率」（各問題を初めて解いたときの正答率）を実力の目安にし、「収録問題の想起率」は本番の得点予測ではないと考えてください。</p>
     <h3>3. 自信度の評価（メタ認知）</h3>
     <p>解答時に「自信あり／たぶん／勘」を選びます。勘で当たった問題は理解できていないとみなして短い間隔で、自信を持って正解した問題は長い間隔で復習します。また、<b>自信があったのに間違えた問題</b>は訂正後によく記憶に残ることが知られています（過剰修正効果：Butterfield & Metcalfe, 2001）。分析画面では自信度ごとの正答率（キャリブレーション）を確認できます。</p>
     <h3>4. インターリーブ（交互練習）</h3>
-    <p>同じ分野をまとめて解くより、複数分野を混ぜて解く方が「どの知識を使うか」を判断する力がつきます（Rohrer & Taylor, 2007）。今日の学習と通常の演習は分野が交互になるように並べています。ただし難しい新分野の初学時は、まとめて学ぶ方が良い場合もあるので、分野別演習では選べるようにしています。</p>
+    <p>同じ種類の問題をまとめて解くより、混ぜて解く方が「どの知識・解法を使うか」を見分ける力がつくことがあります（Rohrer & Taylor, 2007）。ただしメタ分析では、効果は<b>互いに似ていて混同しやすいカテゴリどうし</b>で大きく、条件によっては逆効果にもなります（Brunmair & Richter, 2019）。本アプリの交互出題は主に分散学習の効果を狙ったもので、似た概念の区別には分野別演習で同じ分野をまとめて解くのも有効です。</p>
     <h3>5. 即時フィードバックと精緻化</h3>
     <p>演習では解答直後に解説を表示し、誤答の選択肢がなぜ誤りかまで説明します。さらに「自分の言葉で要点メモ」を書くと、次回その問題の解説と一緒に表示されます（自己説明・生成効果）。間違えた問題は同じセッション内で数問後に再出題し、短期の再想起も行います。</p>
     <h3>6. 本番を模した練習（転移適切処理）</h3>
-    <p>学習時の条件が本番に近いほど成績が上がります。模試モードは本番と同じ問題数・制限時間で、時間中は解説を出しません。記述式（B-1）は字数制限付き入力、論述式（B-2）は字数カウンタ付きで実際に書き、採点基準に沿って自己評価します。</p>
+    <p>学習時の条件が本番に近いほど成績が上がります。模試モードは本番と同じ問題数・制限時間で、時間中は解説を出しません。科目A群・科目B群は本番と同じく別日の想定で分けています。記述式（B-1）は字数制限付き入力、論述式（B-2）は字数カウンタ付きで実際に書き、IPA の評価観点に沿って自己評価します（自己評価は参考値）。</p>
     <h3>7. 毎日少しずつ・連続記録</h3>
     <p>1日15問前後の「今日の学習」を習慣にすることを推奨します。連続学習日数と学習カレンダーで継続を可視化しています。</p>
 
@@ -944,7 +1056,7 @@
       <li><b>毎日</b>：「今日の学習」（10〜15分）。復習待ちが溜まっていたら先に消化。</li>
       <li><b>週1〜2回</b>：B-1 を1事例（45分）。B-2 は骨子だけ作る練習（20分）も効果的。</li>
       <li><b>2週に1回</b>：科目A の模試で時間配分を確認。弱点分野は分野別演習で補強。</li>
-      <li><b>試験1か月前から</b>：通し模試を2〜3回、B-2 は時間を計って手を動かして書き切る練習。</li>
+      <li><b>試験1か月前から</b>：科目A群・科目B群の本番形式模試を2〜3回ずつ、B-2 は時間を計って手を動かして書き切る練習。</li>
       <li><b>直前1週間</b>：「直前総仕上げ」で、試験日に忘れていそうな問題を優先して復習。</li>
     </ol>
     <h2>試験の概要（2026年度・CBT方式）</h2>
@@ -953,7 +1065,7 @@
       <tr><td>科目A-2</td><td>40分</td><td>四肢択一</td><td>25問</td></tr>
       <tr><td>科目B-1</td><td>90分</td><td>記述式</td><td>3問中2問</td></tr>
       <tr><td>科目B-2</td><td>120分</td><td>論述式</td><td>2問中1問</td></tr></table>
-    <p class="muted small">合格基準は各科目 60点以上（B-2 はランク A）。出典：IPA システムアーキテクト試験ページ。収録問題はすべてオリジナルの練習問題です。最新の公式情報は IPA のサイトで確認してください。</p>
+    <p class="muted small">合格基準は各科目 60点以上（B-2 はランク A）。科目A群と科目B群は別日に実施し、採点は多段階選抜です。出典：IPA システムアーキテクト試験ページ、試験要綱 Ver.5.6。収録問題はすべてオリジナルの練習問題です。最新の公式情報は IPA のサイトで確認してください。</p>
     </article>`;
   }
 
@@ -988,8 +1100,8 @@
     const st = S.active && S.active.stage;
     switch (a) {
       case 'go': go(t.dataset.to); break;
-      case 'daily': ensureDaily(); startQuiz(S.daily.ids.filter((id) => !S.daily.done[id] && QMAP[id]), 'daily', '今日の学習'); break;
-      case 'dailymore': buildDaily(); startQuiz(S.daily.ids, 'daily', '今日の学習（追加）'); break;
+      case 'daily': ensureDaily(); startQuiz(dailyRemaining(), 'daily', '今日の学習'); break;
+      case 'dailymore': { const ids = buildDaily(true); startQuiz(ids, 'daily', '今日の学習（追加）'); break; }
       case 'review': {
         const now = Date.now();
         const ids = eligibleA().filter((q) => SRS.isDue(S.cards[q.id], now)).sort((x, y) => SRS.retrievability(S.cards[x.id], now) - SRS.retrievability(S.cards[y.id], now)).slice(0, 30);
@@ -1004,7 +1116,7 @@
       case 'browsego': startQuiz(shuffle(browseList()).map((q) => q.id).slice(0, 50), 'practice', '問題一覧から'); break;
       case 'mark': { const id = t.dataset.id; if (S.marks[id]) delete S.marks[id]; else S.marks[id] = Date.now(); save(); t.classList.toggle('on'); t.textContent = S.marks[id] ? '★' : '☆'; break; }
       case 'sel': if (Q && Q.phase === 'answer') { Q.sel = +t.dataset.ci; render(); } break;
-      case 'conf': answerQuiz(t.dataset.conf); break;
+      case 'conf': answerQuiz(t.dataset.conf || null); break;
       case 'next': nextQuiz(); break;
       case 'allcat': $$(`input[value^="${t.dataset.e}|"]`).forEach((i) => (i.checked = true)); break;
       // 模試
@@ -1045,7 +1157,7 @@
         const l = document.createElement('a'); l.href = u; l.download = `sa-study-backup-${today()}.json`; l.click();
         setTimeout(() => URL.revokeObjectURL(u), 1000); break;
       }
-      case 'redaily': buildDaily(); toast('今日の問題を作り直しました'); break;
+      case 'redaily': { const done = S.daily && S.daily.date === today() ? S.daily.done : {}; buildDaily(); S.daily.done = done; save(); toast('今日の問題を作り直しました'); break; }
       case 'reset': if (confirm('学習記録・模試結果をすべて消去します。よろしいですか？') && confirm('本当に消去しますか？（元に戻せません）')) { S = defaultState(); save(); toast('消去しました'); go('/'); } break;
     }
   });
@@ -1067,8 +1179,12 @@
       const cc = $(`[data-cc2="${t.dataset.b2}"]`); if (cc) cc.innerHTML = b2Counter(p, t.value);
       const tot = $('#b2total'); if (tot) tot.textContent = '合計 ' + B2MAP[st.chosen].parts.reduce((a, p) => a + charCount(st.texts[p.no]), 0) + '字';
     } else if (t.dataset.b2o && st) { st.outline = t.value; saveSoon(); }
-    else if (t.id === 'bq') { browseState.q = t.value; clearTimeout(t._h); t._h = setTimeout(() => { viewBrowse(); const n = $('#bq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 300); }
+    else if (t.id === 'bq') {
+      if (e.isComposing) return; // 日本語変換中は再描画しない
+      browseState.q = t.value; clearTimeout(t._h); t._h = setTimeout(renderBrowseList, 300);
+    }
   });
+  document.addEventListener('compositionend', (e) => { if (e.target.id === 'bq') { browseState.q = e.target.value; renderBrowseList(); } });
   document.addEventListener('change', (e) => {
     const t = e.target;
     const st = S.active && S.active.stage;
@@ -1081,9 +1197,9 @@
       fr.onload = () => {
         try {
           const d = JSON.parse(fr.result);
-          if (!d || !d.cards || !d.settings) throw new Error('形式が違います');
+          if (!isObj(d) || !isObj(d.cards) || !isObj(d.settings)) throw new Error('形式が違います');
           if (!confirm('現在のデータを上書きして読み込みますか？')) return;
-          S = Object.assign(defaultState(), d); save(); toast('読み込みました'); go('/');
+          S = normalize(d); save(); toast('読み込みました'); go('/');
         } catch (err) { toast('読み込みに失敗：' + err.message); }
       };
       fr.readAsText(t.files[0]);
@@ -1097,12 +1213,13 @@
       const s = S.settings;
       const prevExempt = s.a1Exempt;
       s.examDate = fd.get('examDate') || '';
+      s.examDateB = fd.get('examDateB') || '';
       s.dailyCount = Math.max(3, Math.min(100, +fd.get('dailyCount') || 15));
       s.newRatio = +fd.get('newRatio');
       s.a1Exempt = !!fd.get('a1Exempt');
       s.confidence = !!fd.get('confidence');
       s.retry = !!fd.get('retry');
-      if (prevExempt !== s.a1Exempt) S.daily = null;
+      if (prevExempt !== s.a1Exempt && S.daily) { const done = S.daily.done; buildDaily(); S.daily.done = done; }
       save(); toast('保存しました');
     }
   });
@@ -1114,7 +1231,7 @@
         if (k >= '1' && k <= '4') { Q.sel = Q.order[+k - 1]; render(); }
         const cf = CONF.find((c) => c.key === k);
         if (cf && S.settings.confidence) answerQuiz(cf.k);
-        if (k === 'enter' && !S.settings.confidence) answerQuiz('maybe');
+        if (k === 'enter' && !S.settings.confidence) answerQuiz(null);
       } else if (Q.phase === 'feedback' && (k === 'enter' || k === ' ')) { e.preventDefault(); nextQuiz(); }
     } else if (route === '/exam/run' && S.active && S.active.stage && S.active.stage.ids && S.active.stage.pausedLeft == null) {
       const st = S.active.stage;
@@ -1128,6 +1245,8 @@
   // タイマー
   setInterval(() => {
     tickElapsed();
+    const bt = $('#breakt');
+    if (bt && S.active && S.active.breakAt) { const left = 10 * 60000 - (Date.now() - S.active.breakAt); bt.textContent = left > 0 ? `休憩の残り目安 ${fmtClock(left)}` : '休憩時間（10分）を過ぎました。'; }
     if (route !== '/exam/run' || !S.active || !S.active.stage) return;
     const st = S.active.stage;
     if (st.pausedLeft != null) return;
@@ -1139,11 +1258,16 @@
     if (left <= 0) {
       toast('試験時間終了');
       if (st.type === 'A1' || st.type === 'A2') finishAStage(true);
-      else if (st.type === 'B1') { if (st.phase === 'choose' && !st.chosen.length) st.chosen = st.options.slice(0, EXAM.B1.pick); finishB1Answer(); }
+      else if (st.type === 'B1') {
+        if (st.phase === 'choose') st.options.forEach((id) => { if (st.chosen.length < Math.min(EXAM.B1.pick, st.options.length) && !st.chosen.includes(id)) st.chosen.push(id); });
+        finishB1Answer();
+      }
       else { if (!st.chosen) st.chosen = st.options[0]; finishB2Write(); }
     }
   }, 1000);
   window.addEventListener('beforeunload', save);
+  window.addEventListener('pagehide', save);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(); });
 
   // PWA（http(s) で配信している場合のみ）
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -235,3 +235,4 @@ summary { cursor: pointer; color: var(--primary); font-size: 14px; }
   .hero { flex-direction: column; align-items: flex-start; gap: 4px; }
   .hbar { grid-template-columns: 96px 1fr 64px; }
 }
+.tile.dim { opacity: .45; }

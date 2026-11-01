@@ -46,7 +46,7 @@
   }
   /** 本文中の [[図1]] を画像に置き換えて表示 */
   function scenarioHtml(c) {
-    return esc(c.scenario).replace(/\[\[([^\]]+)\]\]/g, (m, k) => (c.figs && c.figs[k] ? `</div>${figHtml(c.figs[k], k)}<div class="pre">` : m));
+    return esc(c.scenario).replace(/\[\[([^\]]+)\]\]/g, (m, k) => (c.figs && c.figs[k] ? `</div>${figHtml(c.figs[k], (c.figAlt && c.figAlt[k]) || k)}<div class="pre">` : m));
   }
   const QMAP = {};
   ALLA.forEach((q) => (QMAP[q.id] = q));

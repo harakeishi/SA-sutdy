@@ -872,7 +872,8 @@
     h += `<h3>出題</h3><div class="row wrap">
       <label>問題数 <select name="n"><option>5</option><option selected>10</option><option>20</option><option>30</option><option value="999">全部</option></select></label>
       <label>対象 <select name="f"><option value="all">すべて</option><option value="new">未学習のみ</option><option value="seen">学習済みのみ</option><option value="wrong">間違えたことがある</option><option value="mark">ブックマーク</option></select></label>
-      <label>順序 <select name="o"><option value="mix">ランダム（分野を混ぜる）</option><option value="block">分野ごとにまとめる</option></select></label>
+      <label>難易度 <select name="lv"><option value="0">すべて</option><option value="1">★ 基本</option><option value="2">★★ 標準</option><option value="3">★★★ 難問のみ</option><option value="23">★★以上</option></select></label>
+            <label>順序 <select name="o"><option value="mix">ランダム（分野を混ぜる）</option><option value="block">分野ごとにまとめる</option></select></label>
       </div><p class="muted small">「分野を混ぜる」（インターリーブ）は解き方の選択から練習でき、本番に強くなります。初学の分野は「まとめる」から始めるのも有効です。</p>
       <div class="row end"><button class="btn primary" type="submit">開始</button></div></form></section>`;
     app.innerHTML = h;
@@ -881,8 +882,9 @@
     const fd = new FormData(form);
     const cats = fd.getAll('cat');
     if (!cats.length) { toast('分野を選んでください'); return; }
-    const n = +fd.get('n'), f = fd.get('f'), o = fd.get('o');
+    const n = +fd.get('n'), f = fd.get('f'), o = fd.get('o'), lv = fd.get('lv') || '0';
     let qs = ALLA.filter((q) => cats.includes(q.exam + '|' + q.cat));
+    if (lv !== '0') qs = qs.filter((q) => lv.includes(String(q.level || 2)));
     qs = qs.filter((q) => {
       const c = S.cards[q.id];
       if (f === 'new') return !c || !c.last;

@@ -59,7 +59,7 @@ window.QB.a2 = (window.QB.a2 || []).concat([
     "obsolete": ""
   },
   {
-    "id": "p-2022r04h-am2-04",
+    "id": "p-2022r04h-am2-04", dupOf: "p-2024r06h-am2-02",
     "set": "2022r04h-am2",
     "no": 4,
     "src": "令和4年度 春期 システムアーキテクト試験 午前Ⅱ 問4",
@@ -99,7 +99,7 @@ window.QB.a2 = (window.QB.a2 || []).concat([
     "obsolete": ""
   },
   {
-    "id": "p-2022r04h-am2-06",
+    "id": "p-2022r04h-am2-06", dupOf: "p-2024r06h-am2-05",
     "set": "2022r04h-am2",
     "no": 6,
     "src": "令和4年度 春期 システムアーキテクト試験 午前Ⅱ 問6",
@@ -251,7 +251,7 @@ window.QB.a2 = (window.QB.a2 || []).concat([
     "obsolete": ""
   },
   {
-    "id": "p-2022r04h-am2-14",
+    "id": "p-2022r04h-am2-14", dupOf: "p-2024r06h-am2-15",
     "set": "2022r04h-am2",
     "no": 14,
     "src": "令和4年度 春期 システムアーキテクト試験 午前Ⅱ 問14",
@@ -270,7 +270,7 @@ window.QB.a2 = (window.QB.a2 || []).concat([
     "obsolete": ""
   },
   {
-    "id": "p-2022r04h-am2-15",
+    "id": "p-2022r04h-am2-15", dupOf: "p-2025r07h-am2-14",
     "set": "2022r04h-am2",
     "no": 15,
     "src": "令和4年度 春期 システムアーキテクト試験 午前Ⅱ 問15",
@@ -289,7 +289,7 @@ window.QB.a2 = (window.QB.a2 || []).concat([
     "obsolete": ""
   },
   {
-    "id": "p-2022r04h-am2-16",
+    "id": "p-2022r04h-am2-16", dupOf: "p-2024r06h-am2-16",
     "set": "2022r04h-am2",
     "no": 16,
     "src": "令和4年度 春期 システムアーキテクト試験 午前Ⅱ 問16",

@@ -287,7 +287,7 @@ window.QB.a1 = (window.QB.a1 || []).concat([
     level: 1
   },
   {
-    id: "p-2024r06h-am1-23", set: "2024r06h-am1", no: 23,
+    id: "p-2024r06h-am1-23", dupOf: "p-2025r07a-am1-24", set: "2024r06h-am1", no: 23,
     src: "令和6年度 春期 高度試験共通 午前Ⅰ 問23",
     cat: "ストラテジ",
     q: "SOAの説明はどれか。",

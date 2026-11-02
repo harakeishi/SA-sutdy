@@ -34,7 +34,7 @@ const ids = new Set();
 for (const k of ['a1', 'a2']) {
   const a = QB[k] || [];
   console.log(`\n■ ${k.toUpperCase()}：${a.length}問`);
-  const pos = [0, 0, 0, 0], lv = [0, 0, 0], cats = {}, past = {}, obsolete = [];
+  const pos = [0, 0, 0, 0], lv = [0, 0, 0], cats = {}, past = {}, obsolete = [], dups = [];
   const lenR = [0, 0, 0, 0]; let lenN = 0;
   const numR = [0, 0, 0, 0]; let numN = 0;
   for (const q of a) {
@@ -53,6 +53,7 @@ for (const k of ['a1', 'a2']) {
       if (!q.noShuffle) err(`${q.id} 過去問は noShuffle: true にする`);
       if (q.fig && !fs.existsSync(path.join(root, q.fig))) err(`${q.id} 図 ${q.fig} がない`);
       if (q.obsolete) obsolete.push(q.id);
+      if (q.dupOf) dups.push(q.id);
       continue;
     }
     pos[q.answer]++;
@@ -69,7 +70,7 @@ for (const k of ['a1', 'a2']) {
   console.log(`  分野：${CATS[k].map((c) => `${c} ${cats[c] || 0}`).join('、')}`);
   console.log(`  難易度：★ ${lv[0]} ／ ★★ ${lv[1]} ／ ★★★ ${lv[2]}`);
   if (Object.keys(past).length) {
-    console.log(`  IPA 過去問：${Object.entries(past).sort().map(([k, v]) => `${k} ${v}問`).join('、')}${obsolete.length ? `（現行注意 ${obsolete.length}問：${obsolete.join(', ')}）` : ''}`);
+    console.log(`  IPA 過去問：${Object.entries(past).sort().map(([k, v]) => `${k} ${v}問`).join('、')}${obsolete.length ? `（現行注意 ${obsolete.length}問：${obsolete.join(', ')}）` : ''}${dups.length ? `（再出題のため通常出題から除外 ${dups.length}問）` : ''}`);
     Object.entries(past).forEach(([k, v]) => { const need = k.endsWith('am1') ? 30 : 25; if (v !== need) err(`${k} の問題数が ${v}（本来 ${need}）`); });
   }
   console.log(`  正解の位置（オリジナル問題）：${pos.join(' / ')}`);

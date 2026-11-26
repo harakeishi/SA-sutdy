@@ -105,7 +105,7 @@
     return {
       v: 1,
       settings: { dailyCount: 15, newRatio: 0.4, a1Exempt: false, examDate: '', examDateB: '', confidence: true, retry: true, includePast: true, theme: 'auto', fontScale: 1, haptics: true, effects: true },
-      cards: {}, log: [], daily: null, exams: [], notes: {}, marks: {}, snapshots: {}, examUsed: {}, active: null,
+      cards: {}, log: [], daily: null, exams: [], notes: {}, workNotes: {}, marks: {}, snapshots: {}, examUsed: {}, active: null,
     };
   }
   let S;
@@ -116,6 +116,13 @@
     if (!isObj(d)) return def;
     const out = def;
     ['cards', 'notes', 'marks', 'snapshots', 'examUsed'].forEach((k) => { if (isObj(d[k])) out[k] = d[k]; });
+    if (isObj(d.workNotes)) {
+      for (const [id, value] of Object.entries(d.workNotes)) {
+        if (!workQuestion(id)) continue;
+        const note = Workpad.normalize(value);
+        if (Workpad.hasContent(note)) out.workNotes[id] = note;
+      }
+    }
     ['log', 'exams'].forEach((k) => { if (Array.isArray(d[k])) out[k] = d[k]; });
     const st = isObj(d.settings) ? d.settings : {};
     const s = out.settings;
@@ -164,7 +171,8 @@
     return defaultState();
   }
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('保存に失敗しました（容量不足の可能性）'); }
+    try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
+    catch (e) { toast('保存に失敗しました（容量不足の可能性）'); return false; }
   }
   let saveTimer = null;
   function saveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); }
@@ -451,6 +459,7 @@
         <label class="note">自分の言葉で要点メモ（次回の解説に表示）
           <textarea data-note="${id}" rows="2" placeholder="例：結合度は低いほど良い。データ結合が最良">${esc(S.notes[id] || '')}</textarea>
         </label>
+        ${workNoteHtml(id)}
       </div>`;
       bar = `<div class="barverdict ${L.ok ? 'ok' : 'ng'}" aria-hidden="true">${L.ok ? '○ 正解' : '× 不正解 — 正解は ' + LABELS[Q.order.indexOf(q.answer)]}</div><div class="confrow"><button class="btn primary block ${L.ok ? '' : 'ngbtn'}" data-act="next">${Q.pos + 1 >= Q.ids.length ? '結果を見る' : '次へ'}<kbd>⏎</kbd></button></div><div class="barhint swipehint">← スワイプでも次へ</div>`;
     }
@@ -739,7 +748,7 @@
     let h = `<section class="card"><h2>${EXAM.B1.label} 自己採点</h2><p class="muted small">模範解答と比べて、各設問を「○ 正解 / △ 部分点 / × 誤り」で採点してください。キーワードの一致は<span class="hit">ハイライト</span>表示されます（目安）。字数オーバーは×扱いが基本です。</p></section>`;
     st.chosen.forEach((cid) => {
       const c = B1MAP[cid];
-      h += `<section class="card"><h3>${esc(c.title)}</h3><details><summary>問題文を表示</summary><div class="pre small">${scenarioHtml(c)}</div></details>${c.review ? `<details open><summary>IPA 採点講評</summary><div class="pre small">${esc(c.review)}</div><p class="srcnote">出典：${esc(c.src)} 採点講評（IPA）</p></details>` : ''}${c.src ? '<p class="srcnote">模範解答は IPA 公表の解答例、解説は本アプリ独自です。</p>' : ''}`;
+      h += `<section class="card"><h3>${esc(c.title)}</h3>${workNoteHtml(cid)}<details><summary>問題文を表示</summary><div class="pre small">${scenarioHtml(c)}</div></details>${c.review ? `<details open><summary>IPA 採点講評</summary><div class="pre small">${esc(c.review)}</div><p class="srcnote">出典：${esc(c.src)} 採点講評（IPA）</p></details>` : ''}${c.src ? '<p class="srcnote">模範解答は IPA 公表の解答例、解説は本アプリ独自です。</p>' : ''}`;
       c.questions.forEach((q, qi) => {
         const k = cid + ':' + qi;
         const mine = st.ans[k] || '';
@@ -794,7 +803,7 @@
       <div class="lenchk">${c.parts.map((p) => { const n = charCount(st.texts[p.no]); const ok = n >= (p.min || 1) && n <= p.max; return `<span class="kw ${ok ? 'on' : 'bad'}">設問${p.no}：${n}字（${p.min ? p.min + '〜' : ''}${p.max}字）${ok ? '✓' : '✗'}</span>`; }).join(' ')}</div>
       ${ev.lenOk ? '' : '<p class="warn small">字数要件を満たしていない設問があります。本番では評価が下がる原因になります。</p>'}
       </section>
-      <section class="card"><h3>あなたの論述</h3>${c.parts.map((p) => `<details><summary>設問${p.no}（${charCount(st.texts[p.no])}字）</summary><div class="pre small">${esc(st.texts[p.no] || '')}</div></details>`).join('')}
+      <section class="card"><h3>あなたの論述</h3>${workNoteHtml(c.id)}${c.parts.map((p) => `<details><summary>設問${p.no}（${charCount(st.texts[p.no])}字）</summary><div class="pre small">${esc(st.texts[p.no] || '')}</div></details>`).join('')}
       <details><summary>骨子例（参考・本アプリ独自）</summary><div class="pre small">${esc(c.outline || '')}</div></details>
       ${c.intent ? `<details><summary>IPA 出題趣旨</summary><div class="pre small">${esc(c.intent)}</div></details>` : ''}
       ${c.review ? `<details><summary>IPA 採点講評</summary><div class="pre small">${esc(c.review)}</div></details>` : ''}
@@ -831,13 +840,13 @@
           <p class="muted small">時間がかかった問題：${slow.map((d) => `問${x.detail.indexOf(d) + 1}（${Math.round(d.ms / 1000)}秒）`).join('、')}</p>
           <details><summary>全問の正誤と解説</summary><ol class="review">${x.detail.map((d) => {
             const q = QMAP[d.id]; if (!q) return '';
-            return `<li class="${d.ok ? 'ok' : 'ng'}"><div class="pre">${esc(q.q)}</div><div class="small">あなた：${d.chosen == null ? '未解答' : esc(q.choices[d.chosen])}<br>正解：<b>${esc(q.choices[q.answer])}</b></div><details><summary>解説</summary><div class="pre small">${esc(q.exp)}</div></details></li>`;
+            return `<li class="${d.ok ? 'ok' : 'ng'}"><div class="pre">${esc(q.q)}</div><div class="small">あなた：${d.chosen == null ? '未解答' : esc(q.choices[d.chosen])}<br>正解：<b>${esc(q.choices[q.answer])}</b></div><details><summary>解説</summary><div class="pre small">${esc(q.exp)}</div>${workNoteHtml(d.id)}</details></li>`;
           }).join('')}</ol></details>
           <div class="row"><button class="btn" data-act="examwrong" data-r="${idx}" data-t="${x.type}">間違えた問題を演習</button></div></section>`;
       } else if (x.type === 'B1') {
         h += `<section class="card"><h3>${EXAM.B1.label} 解答の振り返り</h3>${x.chosen.map((cid) => {
           const c = B1MAP[cid]; if (!c) return '';
-          return `<h4>${esc(c.title)}</h4>` + c.questions.map((q, qi) => {
+          return `<h4>${esc(c.title)}</h4>${workNoteHtml(cid)}` + c.questions.map((q, qi) => {
             const k = cid + ':' + qi, g = x.grades[k];
             return `<div class="bq"><div class="bqno">${esc(q.no)} <span class="${g === 1 ? 'pass' : g === 0 ? 'fail' : 'warn'}">${g === 1 ? '○' : g === 0 ? '×' : '△'}</span></div><div class="pre small">${esc(q.q)}</div>
               <div class="cmp"><div><div class="lbl">あなたの解答</div><div class="pre">${esc(x.ans[k] || '（未解答）')}</div></div><div><div class="lbl">模範解答</div><div class="pre model">${esc(q.answer)}</div></div></div></div>`;
@@ -846,6 +855,7 @@
       } else if (x.type === 'B2') {
         const c = B2MAP[x.chosen];
         if (c) h += `<section class="card"><h3>${EXAM.B2.label}「${esc(c.title)}」</h3>
+          ${workNoteHtml(c.id)}
           ${x.outline ? `<details><summary>骨子メモ</summary><div class="pre small">${esc(x.outline)}</div></details>` : ''}
           ${c.parts.map((p) => `<details ${c.parts[0] === p ? 'open' : ''}><summary>設問${p.no}（${charCount(x.texts[p.no])}字）</summary><div class="pre small">${esc(x.texts[p.no] || '')}</div></details>`).join('')}
           <h4>チェックできなかった項目（次回の改善点）</h4><ul class="small">${B2_RUBRIC.map((r, i) => (x.checks['g' + i] ? '' : `<li>${esc(r)}</li>`)).join('')}${c.points.map((r, i) => (x.checks['p' + i] ? '' : `<li>${esc(r)}</li>`)).join('')}</ul>
@@ -924,7 +934,7 @@
   }
   function viewPractice() {
     const ex = S.settings.a1Exempt ? ['A2'] : ['A2', 'A1'];
-    let h = `<section class="card"><h2>演習メニュー</h2>${practiceModes()}</section><section class="card"><h2>分野別演習</h2><form id="pform">`;
+    let h = `<section class="card"><h2>演習メニュー</h2>${practiceModes()}<div class="row"><a class="btn" href="#/notes">保存したメモ</a></div></section><section class="card"><h2>分野別演習</h2><form id="pform">`;
     ex.forEach((e) => {
       h += `<h3>${EXAM[e].label} <span class="muted small">${EXAM[e].sub}</span> <button type="button" class="btn small ghost" data-act="allcat" data-e="${e}">全選択</button></h3><div class="cats">`;
       catStats(e).forEach((c) => (h += `<label class="catopt"><input type="checkbox" name="cat" value="${e}|${esc(c.cat)}"><span>${esc(c.cat)}</span><small>${c.learned}/${c.total} ・ ${pct(c.acc)}</small></label>`));
@@ -1187,6 +1197,88 @@
     </article>`;
   }
 
+  // ---------------------------------------------------------------- 回答ツール
+  const workDrafts = new WeakMap();
+  let workDialog;
+
+  function workQuestion(id) {
+    for (const bank of [QMAP, B1MAP, B2MAP]) {
+      if (Object.hasOwn(bank, id)) return bank[id];
+    }
+    return null;
+  }
+
+  function currentWorkQuestion() {
+    if (route === '/quiz' && Q && ['answer', 'feedback'].includes(Q.phase)) {
+      return { scope: Q, key: Q.pos, id: Q.ids[Q.pos] };
+    }
+    const stage = S.active?.stage;
+    if (route !== '/exam/run' || !stage || stage.pausedLeft != null) return null;
+    const id = stage.ids ? stage.ids[stage.idx] :
+      stage.type === 'B1' && stage.phase === 'answer' ? stage.chosen[stage.tab] || stage.chosen[0] :
+      stage.type === 'B2' && stage.phase === 'write' ? stage.chosen : null;
+    return id ? { scope: stage, key: id, id } : null;
+  }
+
+  function workNoteHtml(id) {
+    const content = Workpad.preview(S.workNotes[id], esc);
+    return `<div data-work-preview="${esc(id)}">${content ? `<details open class="workpad-preview"><summary>保存した途中計算メモ</summary>${content}</details>` : ''}</div>`;
+  }
+
+  function viewWorkNotes() {
+    const ids = [...new Set([...Object.keys(S.workNotes), ...Object.keys(S.notes)])].filter(workQuestion);
+    app.innerHTML = `<section class="card"><h2>保存したメモ</h2><a href="#/practice">演習メニューへ</a></section>
+      ${ids.length ? ids.map((id) => {
+        const q = workQuestion(id);
+        return `<section class="card"><h3>${esc(q.title || q.q)}</h3>${srcTag(q)}
+          ${S.notes[id] ? `<h4>要点メモ</h4><div class="pre small workpad-text">${esc(S.notes[id])}</div>` : ''}
+          ${workNoteHtml(id)}</section>`;
+      }).join('') : '<section class="card">保存したメモはまだありません。</section>'}`;
+  }
+
+  function mountWorkTabs() {
+    const target = currentWorkQuestion();
+    if (!target) return;
+    const bar = app.querySelector('.actionbar') || app.appendChild(document.createElement('div'));
+    bar.classList.add('actionbar', 'workpad-bar');
+    bar.insertAdjacentHTML('afterbegin', `<div class="workpad-tabs" role="group" aria-label="回答ツール">
+      <button type="button" data-act="worknote" aria-haspopup="dialog">途中計算メモ</button>
+      <button type="button" data-act="workcalc" aria-haspopup="dialog">関数電卓</button></div>`);
+  }
+
+  function openWorkpad(opener, mode) {
+    const target = currentWorkQuestion();
+    if (!target || workDialog?.open) return;
+    const { scope, key, id } = target;
+    if (!workDrafts.has(scope)) workDrafts.set(scope, new Map());
+    const drafts = workDrafts.get(scope);
+    if (!drafts.has(key)) drafts.set(key, {
+      note: Workpad.normalize(S.workNotes[id]),
+      calculator: { expression: '', result: '' },
+    });
+
+    function updateSaved(note) {
+      const previous = S.workNotes[id];
+      if (note) S.workNotes[id] = Workpad.normalize(note);
+      else delete S.workNotes[id];
+      if (!save()) {
+        if (previous) S.workNotes[id] = previous;
+        else delete S.workNotes[id];
+        return false;
+      }
+      app.querySelectorAll('[data-work-preview]').forEach((element) => {
+        if (element.dataset.workPreview === id) element.outerHTML = workNoteHtml(id);
+      });
+      return true;
+    }
+
+    workDialog = Workpad.open({
+      mode, opener, ...drafts.get(key), saved: !!S.workNotes[id],
+      onSave: updateSaved, onDelete: () => updateSaved(null),
+      onClose: () => { if (!workDialog?.open) workDialog = null; },
+    });
+  }
+
   // ---------------------------------------------------------------- ルーター
   let route = '/';
   function go(p) { if (location.hash !== '#' + p) location.hash = '#' + p; else render(); }
@@ -1196,7 +1288,9 @@
     // 再描画でフォーカスが body に飛ばないよう、同じ操作要素へ戻す
     const ae = document.activeElement;
     const key = ae && ae.dataset && ae.dataset.act ? `[data-act="${ae.dataset.act}"]${ae.dataset.ci != null ? `[data-ci="${ae.dataset.ci}"]` : ''}${ae.dataset.i != null ? `[data-i="${ae.dataset.i}"]` : ''}${ae.dataset.conf != null ? `[data-conf="${ae.dataset.conf}"]` : ''}` : null;
+    if (workDialog?.open) workDialog.close();
     renderRoute();
+    mountWorkTabs();
     if (key && document.activeElement === document.body) {
       const el = $(key) || (Q && Q.phase === 'feedback' && route === '/quiz' ? $('[data-act="next"]') : null);
       if (el && !el.disabled) el.focus({ preventScroll: true });
@@ -1205,7 +1299,7 @@
   function renderRoute() {
     route = location.hash.slice(1) || '/';
     const nav = route.split('/')[1] || 'home';
-    const navKey = { b1: 'practice', b2: 'practice', browse: 'practice', quiz: 'practice', guide: 'settings' }[nav] || nav;
+    const navKey = { b1: 'practice', b2: 'practice', browse: 'practice', notes: 'practice', quiz: 'practice', guide: 'settings' }[nav] || nav;
     $$('[data-nav]').forEach((a) => { const on = a.dataset.nav === navKey; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     // 演習・模試中は集中モード（ナビを隠す）
     document.body.classList.toggle('focus', route === '/quiz' || route === '/exam/run');
@@ -1219,6 +1313,7 @@
     if (route === '/b1') return viewBList('b1');
     if (route === '/b2') return viewBList('b2');
     if (route === '/browse') return viewBrowse();
+    if (route === '/notes') return viewWorkNotes();
     if (route === '/stats') return viewStats();
     if (route === '/settings') return viewSettings();
     if (route === '/guide') return viewGuide();
@@ -1241,6 +1336,7 @@
     const st = S.active && S.active.stage;
     switch (a) {
       case 'go': go(t.dataset.to); break;
+      case 'worknote': case 'workcalc': openWorkpad(t, a === 'workcalc' ? 'calc' : 'type'); break;
       case 'sheet': openSheet(t.dataset.sheet); break;
       case 'closesheet': closeSheet(true); break;
       case 'quitquiz': if (!Q || Q.phase === 'done' || confirm('演習を終了しますか？（解答済みの記録は保存されています）')) { Q = null; go('/'); } break;
@@ -1387,7 +1483,7 @@
   });
   document.addEventListener('keydown', (e) => {
     if (document.body.classList.contains('sheet-open')) { if (e.key === 'Escape') closeSheet(true); return; }
-    if (e.target.matches('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.matches('input, textarea, select, [data-act=worknote], [data-act=workcalc]') || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
     if (route === '/quiz' && Q) {
       if (Q.phase === 'answer') {

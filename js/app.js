@@ -105,7 +105,7 @@
     return {
       v: 1,
       settings: { dailyCount: 15, newRatio: 0.4, a1Exempt: false, examDate: '', examDateB: '', confidence: true, retry: true, includePast: true, theme: 'auto', fontScale: 1, haptics: true, effects: true },
-      cards: {}, log: [], daily: null, exams: [], notes: {}, workNotes: {}, marks: {}, snapshots: {}, examUsed: {}, active: null,
+      cards: {}, log: [], daily: null, exams: [], notes: {}, marks: {}, snapshots: {}, examUsed: {}, active: null,
     };
   }
   let S;
@@ -116,13 +116,6 @@
     if (!isObj(d)) return def;
     const out = def;
     ['cards', 'notes', 'marks', 'snapshots', 'examUsed'].forEach((k) => { if (isObj(d[k])) out[k] = d[k]; });
-    if (isObj(d.workNotes)) {
-      for (const [id, value] of Object.entries(d.workNotes)) {
-        if (!workQuestion(id)) continue;
-        const note = Workpad.normalize(value);
-        if (Workpad.hasContent(note)) out.workNotes[id] = note;
-      }
-    }
     ['log', 'exams'].forEach((k) => { if (Array.isArray(d[k])) out[k] = d[k]; });
     const st = isObj(d.settings) ? d.settings : {};
     const s = out.settings;
@@ -163,15 +156,20 @@
     if (st.type === 'B2') return Array.isArray(st.options) && st.options.every((id) => B2MAP[id]);
     return false;
   }
+  let legacyWorkNotes;
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) return normalize(JSON.parse(raw));
+      if (raw) {
+        const data = JSON.parse(raw);
+        legacyWorkNotes = data?.workNotes;
+        return normalize(data);
+      }
     } catch (e) { console.warn(e); }
     return defaultState();
   }
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
+    try { localStorage.setItem(KEY, JSON.stringify(legacyWorkNotes ? { ...S, workNotes: legacyWorkNotes } : S)); return true; }
     catch (e) { toast('保存に失敗しました（容量不足の可能性）'); return false; }
   }
   let saveTimer = null;
@@ -182,7 +180,8 @@
     if (e.key !== KEY || e.newValue == null) return;
     try { S = normalize(JSON.parse(e.newValue)); } catch (err) { return; }
     const el = document.activeElement;
-    if (!(el && el.matches && el.matches('textarea, input'))) render();
+    if (workDialog?.open) refreshAfterWorkDialog = true;
+    else if (!(el && el.matches && el.matches('textarea, input'))) render();
   });
 
   // ---------------------------------------------------------------- ユーティリティ
@@ -1199,7 +1198,72 @@
 
   // ---------------------------------------------------------------- 回答ツール
   const workDrafts = new WeakMap();
+  const listDraftScope = {};
+  let examDraftScope = {};
+  let examDraftKey;
   let workDialog;
+  let refreshAfterWorkDialog = false;
+  let workNotes = Workpad.normalizeNotes(legacyWorkNotes);
+  const workChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('sa-study-workpad') : null;
+  let workRefresh = 0;
+
+  function refreshWorkPreviews() {
+    if (route === '/notes' && !workDialog?.open && !document.activeElement?.matches('textarea')) {
+      render();
+      return;
+    }
+    app.querySelectorAll('[data-work-preview]').forEach((element) => {
+      const id = element.dataset.workPreview;
+      element.outerHTML = workNoteHtml(id);
+    });
+  }
+
+  async function loadWorkNotes() {
+    const revision = ++workRefresh;
+    const legacy = legacyWorkNotes;
+    try {
+      const notes = await Workpad.accessNotes(legacy ? (existing) =>
+        Object.assign(Object.create(null), Workpad.normalizeNotes(legacy), existing) : undefined);
+      if (legacy && legacyWorkNotes === legacy) {
+        legacyWorkNotes = null;
+        try {
+          const current = JSON.parse(localStorage.getItem(KEY));
+          if (current?.workNotes) {
+            delete current.workNotes;
+            localStorage.setItem(KEY, JSON.stringify(current));
+          }
+        } catch (error) { console.warn(error); }
+      }
+      if (revision === workRefresh) { workNotes = notes; refreshWorkPreviews(); }
+    } catch (error) { console.warn('途中計算メモの読み込みに失敗', error); }
+  }
+
+  async function writeWorkNotes(update) {
+    const notes = await Workpad.accessNotes(update);
+    workRefresh++;
+    workNotes = notes;
+    workChannel?.postMessage('updated');
+  }
+
+  // バックアップと初期化は学習記録とメモの両方を置き換える。
+  async function replaceStudyData(next, notes) {
+    await initialWorkNotes;
+    const previous = S;
+    clearTimeout(saveTimer);
+    S = next;
+    if (!save()) { S = previous; return false; }
+    try {
+      await writeWorkNotes(() => notes);
+      refreshWorkPreviews();
+      return true;
+    } catch (error) {
+      if (S === next) { S = previous; save(); }
+      toast('途中計算メモの保存先にアクセスできませんでした');
+      return false;
+    }
+  }
+
+  if (workChannel) workChannel.onmessage = loadWorkNotes;
 
   function workQuestion(id) {
     for (const bank of [QMAP, B1MAP, B2MAP]) {
@@ -1210,29 +1274,41 @@
 
   function currentWorkQuestion() {
     if (route === '/quiz' && Q && ['answer', 'feedback'].includes(Q.phase)) {
-      return { scope: Q, key: Q.pos, id: Q.ids[Q.pos] };
+      return { scope: Q, key: Q.pos, id: Q.ids[Q.pos], allowCalc: true };
     }
     const stage = S.active?.stage;
     if (route !== '/exam/run' || !stage || stage.pausedLeft != null) return null;
     const id = stage.ids ? stage.ids[stage.idx] :
       stage.type === 'B1' && stage.phase === 'answer' ? stage.chosen[stage.tab] || stage.chosen[0] :
       stage.type === 'B2' && stage.phase === 'write' ? stage.chosen : null;
-    return id ? { scope: stage, key: id, id } : null;
+    if (!id) return null;
+    const key = S.active.started + ':' + S.active.si + ':' + stage.startedAt;
+    if (examDraftKey !== key) {
+      examDraftKey = key;
+      examDraftScope = {};
+    }
+    return { scope: examDraftScope, key: id, id, allowCalc: !!S.active.opt?.caseId };
   }
 
   function workNoteHtml(id) {
-    const content = Workpad.preview(S.workNotes[id], esc);
+    const content = Workpad.preview(workNotes[id], esc);
     return `<div data-work-preview="${esc(id)}">${content ? `<details open class="workpad-preview"><summary>保存した途中計算メモ</summary>${content}</details>` : ''}</div>`;
   }
 
   function viewWorkNotes() {
-    const ids = [...new Set([...Object.keys(S.workNotes), ...Object.keys(S.notes)])].filter(workQuestion);
+    const ids = [...new Set([...Object.keys(workNotes), ...Object.keys(S.notes)])];
     app.innerHTML = `<section class="card"><h2>保存したメモ</h2><a href="#/practice">演習メニューへ</a></section>
       ${ids.length ? ids.map((id) => {
         const q = workQuestion(id);
-        return `<section class="card"><h3>${esc(q.title || q.q)}</h3>${srcTag(q)}
-          ${S.notes[id] ? `<h4>要点メモ</h4><div class="pre small workpad-text">${esc(S.notes[id])}</div>` : ''}
-          ${workNoteHtml(id)}</section>`;
+        const title = q?.title || (q?.q ? q.q.slice(0, 72) + (q.q.length > 72 ? '…' : '') : id);
+        const action = Object.hasOwn(QMAP, id) ? 'one' : Object.hasOwn(B1MAP, id) ? 'b1' : 'b2';
+        return `<section class="card"><h3>${esc(title)}</h3>${q ? srcTag(q) : ''}
+          ${S.notes[id] ? `<label>要点メモ<textarea rows="2" data-note="${esc(id)}">${esc(S.notes[id])}</textarea></label>` : ''}
+          ${workNoteHtml(id)}
+          <div class="row wrap">
+            ${workNotes[id] ? `<button class="btn small" data-act="workedit" data-id="${esc(id)}">途中計算メモを編集</button>` : ''}
+            ${q ? `<button class="btn small" data-act="${action}" data-id="${esc(id)}">この問題を解く</button>` : ''}
+          </div></section>`;
       }).join('') : '<section class="card">保存したメモはまだありません。</section>'}`;
   }
 
@@ -1243,39 +1319,48 @@
     bar.classList.add('actionbar', 'workpad-bar');
     bar.insertAdjacentHTML('afterbegin', `<div class="workpad-tabs" role="group" aria-label="回答ツール">
       <button type="button" data-act="worknote" aria-haspopup="dialog">途中計算メモ</button>
-      <button type="button" data-act="workcalc" aria-haspopup="dialog">関数電卓</button></div>`);
+      ${target.allowCalc ? '<button type="button" data-act="workcalc" aria-haspopup="dialog">関数電卓</button>' : ''}</div>`);
   }
 
   function openWorkpad(opener, mode) {
-    const target = currentWorkQuestion();
-    if (!target || workDialog?.open) return;
-    const { scope, key, id } = target;
+    const listId = route === '/notes' ? opener.dataset.id : null;
+    const target = listId && workNotes[listId] ? { scope: listDraftScope, key: listId, id: listId, allowCalc: false } : currentWorkQuestion();
+    if (!target || workDialog?.open || (mode === 'calc' && !target.allowCalc)) return;
+    const { scope, key, id, allowCalc } = target;
     if (!workDrafts.has(scope)) workDrafts.set(scope, new Map());
     const drafts = workDrafts.get(scope);
     if (!drafts.has(key)) drafts.set(key, {
-      note: Workpad.normalize(S.workNotes[id]),
+      note: Workpad.normalize(workNotes[id]),
       calculator: { expression: '', result: '' },
     });
 
-    function updateSaved(note) {
-      const previous = S.workNotes[id];
-      if (note) S.workNotes[id] = Workpad.normalize(note);
-      else delete S.workNotes[id];
-      if (!save()) {
-        if (previous) S.workNotes[id] = previous;
-        else delete S.workNotes[id];
+    async function updateSaved(note) {
+      try {
+        await writeWorkNotes((notes) => {
+          if (note) notes[id] = note;
+          else delete notes[id];
+          return notes;
+        });
+        refreshWorkPreviews();
+        return true;
+      } catch (error) {
+        console.warn(error);
         return false;
       }
-      app.querySelectorAll('[data-work-preview]').forEach((element) => {
-        if (element.dataset.workPreview === id) element.outerHTML = workNoteHtml(id);
-      });
-      return true;
     }
 
     workDialog = Workpad.open({
-      mode, opener, ...drafts.get(key), saved: !!S.workNotes[id],
+      mode, opener, allowCalc, ...drafts.get(key), saved: !!workNotes[id],
       onSave: updateSaved, onDelete: () => updateSaved(null),
-      onClose: () => { if (!workDialog?.open) workDialog = null; },
+      onClose: () => {
+        if (workDialog?.open) return;
+        workDialog = null;
+        if (listId) drafts.delete(key);
+        if (refreshAfterWorkDialog || (listId && route === '/notes')) {
+          refreshAfterWorkDialog = false;
+          render();
+        }
+      },
     });
   }
 
@@ -1329,14 +1414,14 @@
   });
 
   // ---------------------------------------------------------------- イベント
-  document.addEventListener('click', (e) => {
+  document.addEventListener('click', async (e) => {
     const t = e.target.closest('[data-act]');
     if (!t || t.disabled) return;
     const a = t.dataset.act;
     const st = S.active && S.active.stage;
     switch (a) {
       case 'go': go(t.dataset.to); break;
-      case 'worknote': case 'workcalc': openWorkpad(t, a === 'workcalc' ? 'calc' : 'type'); break;
+      case 'workedit': case 'worknote': case 'workcalc': openWorkpad(t, a === 'workcalc' ? 'calc' : 'type'); break;
       case 'sheet': openSheet(t.dataset.sheet); break;
       case 'closesheet': closeSheet(true); break;
       case 'quitquiz': if (!Q || Q.phase === 'done' || confirm('演習を終了しますか？（解答済みの記録は保存されています）')) { Q = null; go('/'); } break;
@@ -1402,13 +1487,14 @@
       case 'b2done': finishB2Grade(); break;
       // 設定
       case 'export': {
-        const blob = new Blob([JSON.stringify(S)], { type: 'application/json' });
+        await initialWorkNotes;
+        const blob = new Blob([JSON.stringify({ ...S, workNotes })], { type: 'application/json' });
         const u = URL.createObjectURL(blob);
         const l = document.createElement('a'); l.href = u; l.download = `sa-study-backup-${today()}.json`; l.click();
         setTimeout(() => URL.revokeObjectURL(u), 1000); break;
       }
       case 'redaily': { const done = S.daily && S.daily.date === today() ? S.daily.done : {}; buildDaily(); S.daily.done = done; save(); toast('今日の問題を作り直しました'); break; }
-      case 'reset': if (confirm('学習記録・模試結果をすべて消去します。よろしいですか？') && confirm('本当に消去しますか？（元に戻せません）')) { S = defaultState(); save(); toast('消去しました'); go('/'); } break;
+      case 'reset': if (confirm('学習記録・模試結果をすべて消去します。よろしいですか？') && confirm('本当に消去しますか？（元に戻せません）')) { if (await replaceStudyData(defaultState(), Workpad.normalizeNotes())) { toast('消去しました'); go('/'); } } break;
     }
   });
 
@@ -1444,12 +1530,12 @@
     } else if (t.id === 'be' || t.id === 'bs') { browseState[t.id === 'be' ? 'e' : 's'] = t.value; viewBrowse(); }
     else if (t.id === 'importf' && t.files[0]) {
       const fr = new FileReader();
-      fr.onload = () => {
+      fr.onload = async () => {
         try {
           const d = JSON.parse(fr.result);
           if (!isObj(d) || !isObj(d.cards) || !isObj(d.settings)) throw new Error('形式が違います');
           if (!confirm('現在のデータを上書きして読み込みますか？')) return;
-          S = normalize(d); save(); toast('読み込みました'); go('/');
+          if (await replaceStudyData(normalize(d), Workpad.normalizeNotes(d.workNotes))) { toast('読み込みました'); go('/'); }
         } catch (err) { toast('読み込みに失敗：' + err.message); }
       };
       fr.readAsText(t.files[0]);
@@ -1483,8 +1569,9 @@
   });
   document.addEventListener('keydown', (e) => {
     if (document.body.classList.contains('sheet-open')) { if (e.key === 'Escape') closeSheet(true); return; }
-    if (e.target.matches('input, textarea, select, [data-act=worknote], [data-act=workcalc]') || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.matches('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
+    if ((k === 'enter' || k === ' ') && e.target.matches('[data-act=worknote], [data-act=workcalc]')) return;
     if (route === '/quiz' && Q) {
       if (Q.phase === 'answer') {
         if (k >= '1' && k <= '4') { Q.sel = Q.order[+k - 1]; render(); }
@@ -1636,6 +1723,7 @@
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(); });
 
   // PWA（http(s) で配信している場合のみ）
+  const initialWorkNotes = loadWorkNotes();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
   applyPrefs();

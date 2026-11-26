@@ -3,19 +3,22 @@
   'use strict';
 
   const POINT_LIMIT = 6000;
+  const INK_WIDTH = 1000;
+  const INK_HEIGHT = 500;
+  const MIN_POINT_DISTANCE = 5;
   const TEXT_LIMIT = 4000;
   const functions = {
     sqrt: Math.sqrt, log: Math.log10, ln: Math.log,
-    sin: Math.sin, cos: Math.cos, tan: Math.tan, abs: Math.abs,
+    abs: Math.abs,
   };
 
   // 入力を数式として解釈する。JavaScript として実行しない。
   function calculate(input) {
     if (input.length > 160) throw new Error('式は160文字以内で入力してください');
-    const source = input.replace(/\s/g, '').replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/π/g, 'pi');
-    const tokens = source.match(/(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[a-z]+|[()+*/^-]/g) || [];
+    const source = input.toLowerCase().trim().replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/π/g, 'pi');
+    const tokens = source.match(/(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]\d+)?|[a-z]+|[()+*/^-]|[^\s]/g) || [];
     const invalid = () => { throw new Error('式を確認してください'); };
-    if (!source || tokens.join('') !== source) invalid();
+    if (!tokens.length) invalid();
     let position = 0;
     function take(token) {
       if (tokens[position] !== token) return false;
@@ -31,7 +34,7 @@
     function atom() {
       if (tokens[position] === '(') return group();
       const token = tokens[position++];
-      if (/^[\d.]/.test(token)) return Number(token);
+      if (token && Number.isFinite(Number(token))) return Number(token);
       if (token === 'pi') return Math.PI;
       if (token === 'e') return Math.E;
       if (Object.hasOwn(functions, token)) return functions[token](group());
@@ -65,7 +68,11 @@
     return Number(result.toPrecision(14)).toString();
   }
 
-  function blank() { return { text: '', strokes: [] }; }
+  function blank() { return { text: '', strokes: [], inkVersion: 1 }; }
+
+  function farEnough(previous, point) {
+    return !previous || Math.hypot(previous[0] - point[0], previous[1] - point[1]) >= MIN_POINT_DISTANCE;
+  }
 
   function normalize(value) {
     const note = blank();
@@ -75,11 +82,19 @@
     for (const stroke of (Array.isArray(value.strokes) ? value.strokes.slice(0, POINT_LIMIT) : [])) {
       if (!remaining) break;
       if (!Array.isArray(stroke)) continue;
-      const points = stroke.slice(0, remaining).filter((point) =>
-        Array.isArray(point) && point.length === 2 &&
-        point.every((coordinate) => Number.isInteger(coordinate) && coordinate >= 0 && coordinate <= 1000));
+      const points = [];
+      const oldInk = value.inkVersion !== 1;
+      for (const point of stroke.slice(0, POINT_LIMIT)) {
+        if (!Array.isArray(point) || point.length !== 2) continue;
+        const [x, y] = point;
+        if (!Number.isInteger(x) || x < 0 || x > INK_WIDTH ||
+            !Number.isInteger(y) || y < 0 || y > (oldInk ? INK_WIDTH : INK_HEIGHT)) continue;
+        const scaled = [x, oldInk ? Math.round(y / 2) : y];
+        if (!farEnough(points.at(-1), scaled)) continue;
+        points.push(scaled);
+        if (--remaining === 0) break;
+      }
       if (points.length) note.strokes.push(points);
-      remaining -= points.length;
     }
     return note;
   }
@@ -94,7 +109,7 @@
   }
 
   function drawing(strokes, editable) {
-    return '<svg class="workpad-drawing" viewBox="0 0 1000 1000" preserveAspectRatio="none" role="img" aria-label="' +
+    return '<svg class="workpad-drawing" viewBox="0 0 1000 500" preserveAspectRatio="xMidYMid meet" role="img" aria-label="' +
       (editable ? '手書き入力欄' : '手書きメモ') + '">' + paths(strokes) + '</svg>';
   }
 
@@ -104,7 +119,7 @@
       (note.strokes.length ? drawing(note.strokes, false) : '');
   }
 
-  function open({ mode, note, calculator, onSave, onDelete, saved, opener, onClose }) {
+  function open({ mode, note, calculator, allowCalc, onSave, onDelete, saved, opener, onClose }) {
     const dialog = document.createElement('dialog');
     dialog.className = 'workpad-sheet';
     dialog.setAttribute('aria-labelledby', 'workpad-title');
@@ -113,6 +128,17 @@
     const body = dialog.querySelector('.workpad-body');
     const status = dialog.querySelector('.workpad-status');
     let pen = null;
+    let writing = false;
+    const viewport = window.visualViewport;
+    function resizeSheet() {
+      if (!viewport || viewport.scale !== 1) return;
+      const focused = dialog.querySelector('input:focus, textarea:focus');
+      const inset = focused ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
+      dialog.style.setProperty('--workpad-keyboard-inset', inset + 'px');
+      dialog.style.setProperty('--workpad-visible-height', (inset ? viewport.height : window.innerHeight) + 'px');
+    }
+    dialog.addEventListener('focusin', resizeSheet);
+    dialog.addEventListener('focusout', () => requestAnimationFrame(resizeSheet));
 
     function show(nextMode) {
       mode = nextMode;
@@ -121,16 +147,16 @@
       dialog.querySelector('h2').textContent = mode === 'calc' ? '関数電卓' : '途中計算メモ';
       if (mode === 'calc') {
         const keys = [
-          ['sin(', 'cos(', 'tan(', 'π', 'e', '⌫'],
-          ['sqrt(', 'log(', 'ln(', 'abs(', '^', 'AC'],
-          ['7', '8', '9', '÷', '(', ')'],
-          ['4', '5', '6', '×', '−', '+'],
-          ['1', '2', '3', '0', '.', '='],
+          ['sqrt(', 'log(', 'ln(', 'abs(', '^', '⌫'],
+          ['π', 'e', 'AC', '(', ')', '÷'],
+          ['7', '8', '9', '×', '−', '+'],
+          ['4', '5', '6', '1', '2', '3'],
+          ['0', '.', '='],
         ];
-        body.innerHTML = `<input class="workpad-expression" aria-label="計算式" placeholder="例：2^1.2" maxlength="160" autocomplete="off" spellcheck="false">
+        body.innerHTML = `<input class="workpad-expression" aria-label="計算式" placeholder="例：2^1.2" maxlength="160" autocomplete="off" autocapitalize="off" spellcheck="false">
           <output class="workpad-result" aria-live="polite"></output>
           <div class="workpad-keys">${keys.flat().map((key) => `<button type="button" class="btn" data-key="${key}">${key}</button>`).join('')}</div>
-          <p class="small muted">log は底10、ln は自然対数、三角関数はラジアン</p>
+          <p class="small muted">log は底10、ln は自然対数。指数表記は 2e+3 のように符号を付けます。</p>
           <div class="row wrap"><button type="button" class="btn small" data-pad="to-note">式と結果をメモに追加</button><button type="button" class="btn small ghost" data-pad="note">メモを開く</button></div>`;
         body.querySelector('input').value = calculator.expression;
         body.querySelector('output').textContent = calculator.result;
@@ -139,7 +165,7 @@
       body.innerHTML = `<div class="row wrap workpad-modes">
           <button type="button" class="btn small" data-pad="type" aria-pressed="${mode === 'type'}">キーボード</button>
           <button type="button" class="btn small" data-pad="draw" aria-pressed="${mode === 'draw'}">手書き</button>
-          <button type="button" class="btn small ghost" data-pad="calc">関数電卓</button>
+          ${allowCalc ? '<button type="button" class="btn small ghost" data-pad="calc">関数電卓</button>' : ''}
         </div>
         ${mode === 'draw' ? drawing(note.strokes, true) + '<div class="row"><button type="button" class="btn small ghost" data-pad="undo">一画戻す</button><button type="button" class="btn small ghost" data-pad="clear-ink">手書きを消す</button></div>' :
           '<textarea aria-label="途中計算メモ" rows="4" maxlength="4000" placeholder="式や考えたことを入力"></textarea>'}
@@ -176,7 +202,7 @@
         evaluate();
       }
     });
-    dialog.addEventListener('click', (event) => {
+    dialog.addEventListener('click', async (event) => {
       const button = event.target.closest('button');
       if (!button) return;
       const key = button.dataset.key;
@@ -213,17 +239,31 @@
         case 'undo': note.strokes.pop(); body.querySelector('svg').innerHTML = paths(note.strokes); break;
         case 'clear-ink': note.strokes.length = 0; body.querySelector('svg').replaceChildren(); break;
         case 'save':
+          if (writing) break;
           if (!hasContent(note)) { status.textContent = '文字か手書きでメモを入力してください'; break; }
-          if (onSave(note)) {
+          writing = true;
+          button.disabled = true;
+          const stored = await onSave(normalize(note));
+          writing = false;
+          button.disabled = false;
+          if (stored) {
             saved = true;
-            body.querySelector('[data-pad="delete"]').hidden = false;
+            const deleteButton = body.querySelector('[data-pad="delete"]');
+            if (deleteButton) deleteButton.hidden = false;
             status.textContent = 'この問題に保存しました';
           } else status.textContent = '保存できませんでした';
           break;
         case 'delete':
-          if (onDelete()) {
+          if (writing) break;
+          writing = true;
+          button.disabled = true;
+          const deleted = await onDelete();
+          writing = false;
+          button.disabled = false;
+          if (deleted) {
             saved = false;
-            button.hidden = true;
+            Object.assign(note, blank());
+            show(mode);
             status.textContent = '保存済みメモを削除しました';
           } else status.textContent = '削除できませんでした';
           break;
@@ -231,10 +271,12 @@
     });
 
     function addPoint(event, svg) {
-      const bounds = svg.getBoundingClientRect();
-      const scale = (n, size) => Math.round(Math.max(0, Math.min(1000, n * 1000 / size)));
-      const point = [scale(event.clientX - bounds.left, bounds.width), scale(event.clientY - bounds.top, bounds.height)];
-      if (pen.stroke.at(-1)?.join() === point.join()) return;
+      const matrix = svg.getScreenCTM();
+      if (!matrix) return;
+      const local = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+      const clamp = (n, max) => Math.round(Math.max(0, Math.min(max, n)));
+      const point = [clamp(local.x, INK_WIDTH), clamp(local.y, INK_HEIGHT)];
+      if (!farEnough(pen.stroke.at(-1), point)) return;
       if (!pen.remaining) { status.textContent = '手書きの上限に達しました。一画戻すと続けられます'; return; }
       pen.remaining--;
       pen.stroke.push(point);
@@ -264,9 +306,11 @@
     }));
 
     dialog.addEventListener('close', () => {
+      viewport?.removeEventListener('resize', resizeSheet);
+      viewport?.removeEventListener('scroll', resizeSheet);
       dialog.remove();
-      onClose();
       if (opener.isConnected) opener.focus({ preventScroll: true });
+      onClose();
     });
     dialog.addEventListener('click', (event) => {
       if (event.target === dialog && event.clientY < dialog.getBoundingClientRect().top) dialog.close();
@@ -274,8 +318,55 @@
     show(mode);
     document.body.appendChild(dialog);
     dialog.showModal();
+    viewport?.addEventListener('resize', resizeSheet);
+    viewport?.addEventListener('scroll', resizeSheet);
+    resizeSheet();
     return dialog;
   }
 
-  window.Workpad = { blank, normalize, hasContent, preview, open, calculate };
+  function normalizeNotes(values) {
+    const notes = Object.create(null);
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return notes;
+    for (const [id, value] of Object.entries(values)) {
+      const note = normalize(value);
+      if (hasContent(note)) notes[id] = note;
+    }
+    return notes;
+  }
+
+  let database;
+  function openDatabase() {
+    if (!database) database = new Promise((resolve, reject) => {
+      const request = indexedDB.open('sa-study-workpad', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('notes');
+      request.onsuccess = () => {
+        request.result.onversionchange = () => { request.result.close(); database = undefined; };
+        resolve(request.result);
+      };
+      request.onerror = () => reject(request.error);
+    }).catch((error) => { database = undefined; throw error; });
+    return database;
+  }
+
+  // The read and update share a transaction so different tabs can save different questions safely.
+  async function accessNotes(update) {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction('notes', update ? 'readwrite' : 'readonly');
+      const store = transaction.objectStore('notes');
+      const request = store.get('byQuestion');
+      let notes;
+      request.onsuccess = () => {
+        notes = Object.assign(Object.create(null), request.result);
+        if (update) {
+          notes = update(notes);
+          store.put(notes, 'byQuestion');
+        }
+      };
+      transaction.oncomplete = () => resolve(notes);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  }
+
+  window.Workpad = { blank, normalize, normalizeNotes, hasContent, preview, open, calculate, accessNotes };
 })();

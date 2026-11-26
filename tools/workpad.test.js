@@ -31,6 +31,13 @@ test('invalid expressions and ambiguous adjacency are rejected', () => {
   }
 });
 
+test('superscript digits are rejected with exponent syntax guidance', () => {
+  for (const expression of ['3²', '2³+1', '３¹⁰', '2⁹']) {
+    assert.throws(() => calculate(expression), /3\^2/, expression);
+  }
+  assert.equal(calculate('３＾２'), '9');
+});
+
 test('legacy ink is rescaled, downsampled and isolated from the original', () => {
   const original = { text: '途中計算', strokes: [[[0, 0], [1, 2], [10, 20], [1000, 1000], [0, -1], [2, 3, 4]], []] };
   const note = normalize(original);

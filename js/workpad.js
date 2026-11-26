@@ -15,7 +15,10 @@
   // 入力を数式として解釈する。JavaScript として実行しない。
   function calculate(input) {
     if (input.length > 160) throw new Error('式は160文字以内で入力してください');
-    const source = input.normalize('NFKC').toLowerCase().trim().replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/π/g, 'pi');
+    if (/[⁰¹²³⁴-⁹]/.test(input)) throw new Error('べき乗は 3^2 のように入力してください');
+    // 全角の英数字・記号だけを変換し、他の Unicode 文字の意味を変えない。
+    const source = input.replace(/[！-～]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+      .toLowerCase().trim().replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/π/g, 'pi');
     const tokens = source.match(/(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]\d+)?|[a-z]+|[()+*/^-]|[^\s]/g) || [];
     const invalid = () => { throw new Error('式を確認してください'); };
     if (!tokens.length) invalid();

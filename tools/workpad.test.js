@@ -16,13 +16,17 @@ test('scientific functions, precedence, signed and right-associative powers', ()
     ['1E-3 + 2e-3', '0.003'],
     ['2e+3', '2000'],
     ['abs(−3)', '3'],
+    ['１＋２', '3'],
+    ['２×３', '6'],
+    ['sqrt(２)', '1.4142135623731'],
+    ['ＳＱＲＴ（４）', '2'],
   ]) {
     assert.equal(calculate(expression), result, expression);
   }
 });
 
 test('invalid expressions and ambiguous adjacency are rejected', () => {
-  for (const expression of ['3 4', '2e3', '1 e+3', '1/0', 'sqrt(-1)', 'alert(1)', '1;', '2^^2', '.', '', '1'.repeat(161)]) {
+  for (const expression of ['3 4', '３　４', '2e3', '2(e)+3', '1 e+3', '1/0', 'sqrt(-1)', 'alert(1)', '1;', '2^^2', '.', '', '1'.repeat(161)]) {
     assert.throws(() => calculate(expression), undefined, expression);
   }
 });

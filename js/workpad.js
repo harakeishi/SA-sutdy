@@ -15,7 +15,7 @@
   // 入力を数式として解釈する。JavaScript として実行しない。
   function calculate(input) {
     if (input.length > 160) throw new Error('式は160文字以内で入力してください');
-    const source = input.toLowerCase().trim().replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/π/g, 'pi');
+    const source = input.normalize('NFKC').toLowerCase().trim().replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/π/g, 'pi');
     const tokens = source.match(/(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]\d+)?|[a-z]+|[()+*/^-]|[^\s]/g) || [];
     const invalid = () => { throw new Error('式を確認してください'); };
     if (!tokens.length) invalid();
@@ -213,7 +213,10 @@
         const end = input.selectionEnd;
         if (key === 'AC') input.value = '';
         else if (key === '⌫') input.setRangeText('', start === end ? Math.max(0, start - 1) : start, end, 'end');
-        else if (input.value.length - (end - start) + key.length <= input.maxLength) input.setRangeText(key, start, end, 'end');
+        else {
+          const value = key === 'e' ? '(e)' : key;
+          if (input.value.length - (end - start) + value.length <= input.maxLength) input.setRangeText(value, start, end, 'end');
+        }
         calculator.expression = input.value;
         calculator.result = '';
         body.querySelector('output').textContent = '';
@@ -238,7 +241,7 @@
         }
         case 'undo': note.strokes.pop(); body.querySelector('svg').innerHTML = paths(note.strokes); break;
         case 'clear-ink': note.strokes.length = 0; body.querySelector('svg').replaceChildren(); break;
-        case 'save':
+        case 'save': {
           if (writing) break;
           if (!hasContent(note)) { status.textContent = '文字か手書きでメモを入力してください'; break; }
           writing = true;
@@ -253,7 +256,8 @@
             status.textContent = 'この問題に保存しました';
           } else status.textContent = '保存できませんでした';
           break;
-        case 'delete':
+        }
+        case 'delete': {
           if (writing) break;
           writing = true;
           button.disabled = true;
@@ -267,6 +271,7 @@
             status.textContent = '保存済みメモを削除しました';
           } else status.textContent = '削除できませんでした';
           break;
+        }
       }
     });
 
@@ -357,7 +362,7 @@
       const request = store.get('byQuestion');
       let notes;
       request.onsuccess = () => {
-        notes = Object.assign(Object.create(null), request.result);
+        notes = normalizeNotes(request.result);
         if (update) {
           notes = update(notes);
           store.put(notes, 'byQuestion');

@@ -1245,22 +1245,28 @@
     workChannel?.postMessage('updated');
   }
 
-  // バックアップと初期化は学習記録とメモの両方を置き換える。
-  async function replaceStudyData(next, notes) {
-    await initialWorkNotes;
-    const previous = S;
+  // メモの保存先にアクセスできない場合も、学習記録は置き換える。
+  async function replaceStudyData(next, notes, successMessage) {
     clearTimeout(saveTimer);
+    const previous = S;
+    const previousLegacy = legacyWorkNotes;
     S = next;
-    if (!save()) { S = previous; return false; }
-    try {
-      await writeWorkNotes(() => notes);
-      refreshWorkPreviews();
-      return true;
-    } catch (error) {
-      if (S === next) { S = previous; save(); }
-      toast('途中計算メモの保存先にアクセスできませんでした');
-      return false;
+    if (notes !== undefined) legacyWorkNotes = null;
+    if (!save()) { S = previous; legacyWorkNotes = previousLegacy; return; }
+
+    if (notes !== undefined) {
+      try {
+        // 開始済みの移行の後で、読み込んだバックアップまたは空のメモに置き換える。
+        await initialWorkNotes;
+        await writeWorkNotes(() => notes);
+      } catch (error) {
+        toast(successMessage + '。途中計算メモは更新できませんでした');
+        go('/');
+        return;
+      }
     }
+    toast(successMessage);
+    go('/');
   }
 
   if (workChannel) workChannel.onmessage = loadWorkNotes;
@@ -1494,7 +1500,7 @@
         setTimeout(() => URL.revokeObjectURL(u), 1000); break;
       }
       case 'redaily': { const done = S.daily && S.daily.date === today() ? S.daily.done : {}; buildDaily(); S.daily.done = done; save(); toast('今日の問題を作り直しました'); break; }
-      case 'reset': if (confirm('学習記録・模試結果をすべて消去します。よろしいですか？') && confirm('本当に消去しますか？（元に戻せません）')) { if (await replaceStudyData(defaultState(), Workpad.normalizeNotes())) { toast('消去しました'); go('/'); } } break;
+      case 'reset': if (confirm('学習記録・模試結果をすべて消去します。よろしいですか？') && confirm('本当に消去しますか？（元に戻せません）')) { await replaceStudyData(defaultState(), Workpad.normalizeNotes(), '学習記録を消去しました'); } break;
     }
   });
 
@@ -1535,7 +1541,8 @@
           const d = JSON.parse(fr.result);
           if (!isObj(d) || !isObj(d.cards) || !isObj(d.settings)) throw new Error('形式が違います');
           if (!confirm('現在のデータを上書きして読み込みますか？')) return;
-          if (await replaceStudyData(normalize(d), Workpad.normalizeNotes(d.workNotes))) { toast('読み込みました'); go('/'); }
+          const notes = Object.hasOwn(d, 'workNotes') ? Workpad.normalizeNotes(d.workNotes) : undefined;
+          await replaceStudyData(normalize(d), notes, '学習記録を読み込みました');
         } catch (err) { toast('読み込みに失敗：' + err.message); }
       };
       fr.readAsText(t.files[0]);
